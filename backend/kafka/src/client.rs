@@ -4,9 +4,10 @@ use base64::Engine;
 use error_stack::ResultExt;
 use salty_core::Result;
 use salty_core::{
-    AclAvailability, AclFilter, AclListing, AppError, BrokerSummary, ConfigEntry, Connection, ConnectionStatus, ConsumerGroupLag,
-    ConsumerGroupSummary, EncodedRecord, MessageFetchResult, MessageFilter, MessageHeader, PartitionLag,
-    PartitionSummary, PublishOutcome, SaslMechanism, SecurityProtocol, TopicMessage, TopicSummary,
+    cluster_version_report, AclAvailability, AclFilter, AclListing, AppError, BrokerSummary, ClusterVersionReport,
+    ConfigEntry, Connection, ConnectionStatus, ConsumerGroupLag, ConsumerGroupSummary, EncodedRecord,
+    MessageFetchResult, MessageFilter, MessageHeader, PartitionLag, PartitionSummary, PublishOutcome, SaslMechanism,
+    SecurityProtocol, TopicMessage, TopicSummary, INTER_BROKER_PROTOCOL_VERSION_CONFIG, PROCESS_ROLES_CONFIG,
 };
 use rdkafka::admin::{AdminClient, AdminOptions, ResourceSpecifier};
 use rdkafka::client::{ClientContext, DefaultClientContext};
@@ -282,6 +283,37 @@ pub trait KafkaClient: Send + Sync {
         topic: &str,
         read_timeout: Duration,
     ) -> Result<Vec<ConfigEntry>, AppError>;
+
+    /// Backs the New Connection modal's Detect button: asks the cluster
+    /// which metadata mode it runs in, and which version it reports.
+    ///
+    /// Raw values rather than a saved `Connection`, exactly like
+    /// `test_connection` — this runs on what the user has typed and has not
+    /// saved yet, so there is no connection id to pool a client under, and
+    /// both clients it builds are dropped when it returns.
+    ///
+    /// An authorization refusal comes back as `Ok` with
+    /// `MetadataMode::Unknown` and an explanatory note, **not** as `Err`:
+    /// "this principal may not read broker configs" is a fact about the
+    /// cluster, the same way an empty `AclListing` is. Only a transport
+    /// failure — an unreachable broker, a timeout — is an error.
+    ///
+    /// Note this is the *opposite* of `authorizer_class`'s policy of
+    /// collapsing every failure to `None`, and deliberately so: that one
+    /// silently qualifies another request's result and must never turn a
+    /// good answer into a bad one, whereas this *is* the user's answer and
+    /// has to explain itself.
+    #[allow(clippy::too_many_arguments)]
+    async fn detect_cluster_version(
+        &self,
+        bootstrap_servers: &str,
+        security_protocol: SecurityProtocol,
+        sasl_mechanism: Option<SaslMechanism>,
+        sasl_username: Option<&str>,
+        password: Option<&str>,
+        ssl: BrokerSslConfig<'_>,
+        read_timeout: Duration,
+    ) -> Result<ClusterVersionReport, AppError>;
 
     /// Backs the tree's Access Control category and the Access tabs, via
     /// librdkafka's DescribeAcls admin API — reached over raw FFI, because
@@ -1653,6 +1685,81 @@ impl KafkaClient for RdKafkaClient {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn detect_cluster_version(
+        &self,
+        bootstrap_servers: &str,
+        security_protocol: SecurityProtocol,
+        sasl_mechanism: Option<SaslMechanism>,
+        sasl_username: Option<&str>,
+        password: Option<&str>,
+        ssl: BrokerSslConfig<'_>,
+        read_timeout: Duration,
+    ) -> Result<ClusterVersionReport, AppError> {
+        let config = build_client_config(
+            bootstrap_servers,
+            security_protocol,
+            sasl_mechanism,
+            sasl_username,
+            password,
+            ssl,
+        );
+
+        // Any broker will do: both configs read below are per-node but
+        // static, and a cluster whose nodes disagree about whether they run
+        // KRaft is not a configuration this app needs to describe. Same
+        // reasoning as `authorizer_class`.
+        let consumer_config = config.clone();
+        let broker_id = tokio::task::spawn_blocking(move || {
+            let client = ObservedClient::create(&consumer_config)?;
+            let metadata = client.observed("failed to reach the cluster", |consumer| {
+                consumer.fetch_metadata(None, read_timeout)
+            })?;
+            metadata
+                .brokers()
+                .first()
+                .map(|broker| broker.id())
+                .ok_or_else(|| error_stack::Report::new(AppError::Kafka))
+                .attach("the cluster returned no brokers")
+        })
+        .await
+        .change_context(AppError::Kafka)
+        .attach("version detection task panicked")??;
+
+        let admin: AdminClient<DefaultClientContext> = config
+            .create()
+            .map_err(|err| failure_report(&err, &err.to_string(), "failed to create kafka admin client"))?;
+        let options = AdminOptions::new().request_timeout(Some(read_timeout));
+        let results = admin
+            .describe_configs([&ResourceSpecifier::Broker(broker_id)], &options)
+            .await
+            .map_err(|err| failure_report(&err, &err.to_string(), "failed to describe broker config"))?;
+
+        // A per-resource error here is the authorization case, not a
+        // transport one: the request reached the broker and the broker
+        // answered "no". That collapses to no entries, which
+        // `cluster_version_report` reports as Unknown with a note — see this
+        // method's doc comment for why it is not an `Err`.
+        let entries = results
+            .into_iter()
+            .next()
+            .and_then(|resource| resource.ok())
+            .map(|resource| resource.entries)
+            .unwrap_or_default();
+
+        let value_of = |name: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .map(|entry| entry.value.clone().unwrap_or_default())
+        };
+
+        Ok(cluster_version_report(
+            value_of(PROCESS_ROLES_CONFIG).as_deref(),
+            value_of(INTER_BROKER_PROTOCOL_VERSION_CONFIG).as_deref(),
+        ))
+    }
+
     async fn describe_acls(
         &self,
         connection: &Connection,
@@ -2727,6 +2834,26 @@ mod tests {
     async fn describe_topic_config_errors_for_a_closed_port() {
         let client = RdKafkaClient::new();
         let result = client.describe_topic_config(&sample_connection(), "orders", TEST_READ_TIMEOUT).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn detect_cluster_version_errors_for_a_closed_port() {
+        // A transport failure is an error. An *authorization* refusal is not
+        // — that comes back as Ok with MetadataMode::Unknown, which needs a
+        // broker to exercise (see tests/cluster_mode_detect.rs).
+        let client = RdKafkaClient::new();
+        let result = client
+            .detect_cluster_version(
+                "127.0.0.1:1",
+                SecurityProtocol::Plaintext,
+                None,
+                None,
+                None,
+                BrokerSslConfig::default(),
+                Duration::from_millis(500),
+            )
+            .await;
         assert!(result.is_err());
     }
 
