@@ -53,6 +53,10 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Only the KRaft explainer's "Learn more" button uses this, and the
+        // capability below is scoped to kafka.apache.org — this is the app's
+        // first outbound-link surface and is deliberately held to one host.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
 
