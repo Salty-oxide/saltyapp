@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { KRaftNotice, KRAFT_DOCS_URL } from "./KRaftNotice";
 
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -32,6 +32,14 @@ describe("KRaftNotice", () => {
     // src-tauri/capabilities/default.json scopes opener:allow-open-url to
     // https://kafka.apache.org/* — a URL outside it is rejected at runtime,
     // silently, so this is pinned here rather than discovered by a user.
+    //
+    // The host check and the literal both matter: the first is what the
+    // capability actually constrains, the second catches a typo in the path
+    // that the host check would wave through. `startsWith` is equivalent to
+    // the capability's glob *only* because that pattern is a literal prefix
+    // plus a single trailing `*` — add a literal segment after the wildcard
+    // and these two stop agreeing.
     expect(KRAFT_DOCS_URL.startsWith("https://kafka.apache.org/")).toBe(true);
+    expect(KRAFT_DOCS_URL).toBe("https://kafka.apache.org/documentation/#kraft");
   });
 });

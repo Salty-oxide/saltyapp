@@ -31,7 +31,14 @@ export function KRaftNotice() {
       <button
         type="button"
         onClick={() => {
-          void openUrl(KRAFT_DOCS_URL);
+          // Not `void`: a rejection here (no default browser, or a URL that
+          // has drifted outside the capability's scope) would otherwise be
+          // an unhandled rejection with nothing to show for it. There is no
+          // UI to put an error in — this section is an explainer, not a
+          // form — so the console is the honest place for it.
+          openUrl(KRAFT_DOCS_URL).catch((err: unknown) => {
+            console.error("failed to open the KRaft documentation", err);
+          });
         }}
       >
         Learn more about KRaft
