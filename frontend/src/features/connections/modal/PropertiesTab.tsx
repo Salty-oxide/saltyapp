@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import { Dropdown } from "../../../components/Dropdown";
-import { KAFKA_VERSIONS } from "../../../lib/tauri";
+import { isKRaftOnly, KAFKA_VERSIONS } from "../../../lib/tauri";
 import { usePingBootstrapServers, usePingZookeeper } from "../useConnections";
 import { ConnectionDraft } from "./draft";
+import { KRaftNotice } from "./KRaftNotice";
 import { PingResult } from "./PingResult";
 
 const KAFKA_VERSION_OPTIONS = KAFKA_VERSIONS.map((version) => ({ id: version, label: version }));
@@ -97,66 +98,70 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
         </p>
       </section>
 
-      <fieldset disabled={disabled} className="connection-modal-fieldset">
-        <section className="connection-modal-section">
-          <h3>Zookeeper</h3>
-          <label className="connection-modal-checkbox-label">
-            <input
-              type="checkbox"
-              checked={draft.zookeeperEnabled}
-              onChange={(e) => onChange({ zookeeperEnabled: e.target.checked })}
-            />
-            Enable Zookeeper
-          </label>
-          {draft.zookeeperEnabled && (
-            <>
-              <label>
-                Zookeeper host
-                <div className="connection-modal-input-row">
+      {isKRaftOnly(draft.kafkaVersion) ? (
+        <KRaftNotice />
+      ) : (
+        <fieldset disabled={disabled} className="connection-modal-fieldset">
+          <section className="connection-modal-section">
+            <h3>Zookeeper</h3>
+            <label className="connection-modal-checkbox-label">
+              <input
+                type="checkbox"
+                checked={draft.zookeeperEnabled}
+                onChange={(e) => onChange({ zookeeperEnabled: e.target.checked })}
+              />
+              Enable Zookeeper
+            </label>
+            {draft.zookeeperEnabled && (
+              <>
+                <label>
+                  Zookeeper host
+                  <div className="connection-modal-input-row">
+                    <input
+                      value={draft.zookeeperHost}
+                      onChange={(e) => onChange({ zookeeperHost: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Ping zookeeper"
+                      disabled={
+                        pingZookeeper.isPending ||
+                        draft.zookeeperHost.trim().length === 0 ||
+                        draft.zookeeperPort.trim().length === 0
+                      }
+                      onClick={() =>
+                        pingZookeeper.mutate({
+                          host: draft.zookeeperHost.trim(),
+                          port: Number(draft.zookeeperPort),
+                        })
+                      }
+                    >
+                      Ping
+                    </button>
+                  </div>
+                </label>
+                <PingResult mutation={pingZookeeper} failureMessage="Unable to reach zookeeper" />
+                <label>
+                  Zookeeper port
                   <input
-                    value={draft.zookeeperHost}
-                    onChange={(e) => onChange({ zookeeperHost: e.target.value })}
+                    inputMode="numeric"
+                    value={draft.zookeeperPort}
+                    onChange={(e) => onChange({ zookeeperPort: e.target.value })}
                   />
-                  <button
-                    type="button"
-                    aria-label="Ping zookeeper"
-                    disabled={
-                      pingZookeeper.isPending ||
-                      draft.zookeeperHost.trim().length === 0 ||
-                      draft.zookeeperPort.trim().length === 0
-                    }
-                    onClick={() =>
-                      pingZookeeper.mutate({
-                        host: draft.zookeeperHost.trim(),
-                        port: Number(draft.zookeeperPort),
-                      })
-                    }
-                  >
-                    Ping
-                  </button>
-                </div>
-              </label>
-              <PingResult mutation={pingZookeeper} failureMessage="Unable to reach zookeeper" />
-              <label>
-                Zookeeper port
-                <input
-                  inputMode="numeric"
-                  value={draft.zookeeperPort}
-                  onChange={(e) => onChange({ zookeeperPort: e.target.value })}
-                />
-              </label>
-              <label>
-                Zookeeper chroot path
-                <input
-                  value={draft.zookeeperChrootPath}
-                  onChange={(e) => onChange({ zookeeperChrootPath: e.target.value })}
-                  placeholder="/kafka"
-                />
-              </label>
-            </>
-          )}
-        </section>
-      </fieldset>
+                </label>
+                <label>
+                  Zookeeper chroot path
+                  <input
+                    value={draft.zookeeperChrootPath}
+                    onChange={(e) => onChange({ zookeeperChrootPath: e.target.value })}
+                    placeholder="/kafka"
+                  />
+                </label>
+              </>
+            )}
+          </section>
+        </fieldset>
+      )}
     </div>
   );
 }

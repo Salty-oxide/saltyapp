@@ -8,6 +8,7 @@ import { emptyDraft } from "./draft";
 import { PropertiesTab } from "./PropertiesTab";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 function renderWithClient(ui: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -76,8 +77,27 @@ describe("PropertiesTab", () => {
     expect(onChange).toHaveBeenCalledWith({ name: "L" });
   });
 
+  it("replaces the zookeeper section with the KRaft notice on 4.x", () => {
+    const draft = { ...emptyDraft(), kafkaVersion: "4.1", zookeeperEnabled: true };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.queryByLabelText("Enable Zookeeper")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Zookeeper host")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "KRaft" })).toBeInTheDocument();
+  });
+
+  it("keeps the zookeeper section on 3.9, the last version that can run it", () => {
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
+    expect(screen.getByLabelText("Zookeeper host")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "KRaft" })).not.toBeInTheDocument();
+  });
+
   it("does not show zookeeper host/port/chroot fields until zookeeper is enabled", () => {
-    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
     expect(screen.queryByLabelText("Zookeeper host")).not.toBeInTheDocument();
@@ -86,7 +106,7 @@ describe("PropertiesTab", () => {
   });
 
   it("shows zookeeper host/port/chroot fields once zookeeper is enabled", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true };
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     expect(screen.getByLabelText("Zookeeper host")).toBeInTheDocument();
@@ -124,7 +144,13 @@ describe("PropertiesTab", () => {
   it("pings zookeeper and shows a success message", async () => {
     setInvokeHandlers({ connection_ping_zookeeper: () => "REACHABLE" });
     const user = userEvent.setup();
-    const draft = { ...emptyDraft(), zookeeperEnabled: true, zookeeperHost: "zk.local", zookeeperPort: "2181" };
+    const draft = {
+      ...emptyDraft(),
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.local",
+      zookeeperPort: "2181",
+    };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Ping zookeeper" }));
@@ -133,18 +159,24 @@ describe("PropertiesTab", () => {
   });
 
   it("disables the zookeeper ping button until both host and port are filled in", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true };
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Ping zookeeper" })).toBeDisabled();
   });
 
   it("keeps cluster name editable but disables every other field when disabled is true", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true, zookeeperHost: "zk.local", zookeeperPort: "2181" };
+    const draft = {
+      ...emptyDraft(),
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.local",
+      zookeeperPort: "2181",
+    };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} disabled />);
 
     expect(screen.getByLabelText("Cluster name")).toBeEnabled();
     expect(screen.getByLabelText("Bootstrap servers")).toBeDisabled();
-    expect(screen.getByRole("button", { name: /4\.3/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /3\.9/ })).toBeDisabled();
     expect(screen.getByLabelText("Enable Zookeeper")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper host")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper port")).toBeDisabled();
