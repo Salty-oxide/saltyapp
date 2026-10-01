@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Dropdown } from "../../../components/Dropdown";
 import { isKRaftOnly, KAFKA_VERSIONS } from "../../../lib/tauri";
-import { usePingBootstrapServers, usePingZookeeper } from "../useConnections";
-import { ConnectionDraft } from "./draft";
+import { useDetectClusterVersion, usePingBootstrapServers, usePingZookeeper } from "../useConnections";
+import { ConnectionDraft, toNewConnection } from "./draft";
+import { DetectResult } from "./DetectResult";
 import { KRaftNotice } from "./KRaftNotice";
 import { PingResult } from "./PingResult";
 
@@ -34,6 +35,8 @@ export interface ConnectionTabProps {
 export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionTabProps) {
   const pingBootstrap = usePingBootstrapServers();
   const pingZookeeper = usePingZookeeper();
+  const detect = useDetectClusterVersion();
+  const [hidZookeeper, setHidZookeeper] = useState(false);
   const kafkaVersionOptions = useMemo(() => versionOptions(draft.kafkaVersion), [draft.kafkaVersion]);
 
   return (
@@ -64,14 +67,45 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
             </div>
           </label>
           <PingResult mutation={pingBootstrap} failureMessage="Unable to reach bootstrap servers" />
-          <Dropdown
-            label="Kafka cluster version"
-            ariaLabel="Kafka cluster version"
-            options={kafkaVersionOptions}
-            displayedId={draft.kafkaVersion}
-            appliedId={draft.kafkaVersion}
-            onCommit={(id) => onChange({ kafkaVersion: id })}
-          />
+          <div className="connection-modal-input-row connection-modal-detect-row">
+            <Dropdown
+              label="Kafka cluster version"
+              ariaLabel="Kafka cluster version"
+              options={kafkaVersionOptions}
+              displayedId={draft.kafkaVersion}
+              appliedId={draft.kafkaVersion}
+              onCommit={(id) => onChange({ kafkaVersion: id })}
+            />
+            <button
+              type="button"
+              aria-label="Detect cluster version"
+              disabled={detect.isPending || draft.bootstrapServers.trim().length === 0}
+              onClick={() =>
+                detect.mutate(toNewConnection(draft), {
+                  onSuccess: (report) => {
+                    // Applied, not asserted: on a KRaft cluster this is
+                    // derived from inter.broker.protocol.version rather than
+                    // from the authoritative metadata.version, so the user
+                    // can still change it. An unlisted value is fine —
+                    // `versionOptions` appends it.
+                    if (report.suggestedVersion === null) return;
+                    // Keyed on the *applied* version rather than the report's
+                    // mode, so the note appears exactly when the section
+                    // actually went away — not when the broker says KRaft on
+                    // a connection that was already 4.x and had no ZooKeeper
+                    // section to lose.
+                    setHidZookeeper(
+                      !isKRaftOnly(draft.kafkaVersion) && isKRaftOnly(report.suggestedVersion),
+                    );
+                    onChange({ kafkaVersion: report.suggestedVersion });
+                  },
+                })
+              }
+            >
+              Detect
+            </button>
+          </div>
+          <DetectResult mutation={detect} hidZookeeper={hidZookeeper} />
         </fieldset>
       </section>
 
@@ -98,6 +132,11 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
         </p>
       </section>
 
+      {/* Deliberately not wrapped in a `disabled` fieldset, unlike the
+          ZooKeeper section it replaces. `disabled` locks connection
+          *identity* while a cluster is connected — this notice reads no
+          draft state and mutates none, and its only button opens a static
+          documentation URL. Same reasoning as the Publishing checkbox. */}
       {isKRaftOnly(draft.kafkaVersion) ? (
         <KRaftNotice />
       ) : (

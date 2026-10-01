@@ -2050,6 +2050,24 @@ textarea {
   cursor: not-allowed;
 }
 
+/* The version dropdown plus its Detect button. `align-items: flex-end`
+   because `.dropdown-field` is a column carrying its own label — without
+   it the button lines up with the label instead of the dropdown. */
+.connection-modal-detect-row {
+  align-items: flex-end;
+}
+.connection-modal-detect-row .dropdown-field {
+  flex: 1;
+}
+
+.detect-result {
+  font-size: var(--font-size-sm);
+  margin: -4px 0 10px;
+}
+.detect-result p {
+  margin: 0 0 2px;
+}
+
 .ping-result,
 .connection-modal-error {
   font-size: var(--font-size-sm);

@@ -247,4 +247,52 @@ describe("PropertiesTab", () => {
       ).toBeEnabled();
     });
   });
+
+  it("detects the cluster version and applies it to the dropdown", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: "derived from inter.broker.protocol.version",
+      }),
+    });
+    const draft = { ...emptyDraft(), bootstrapServers: "localhost:9092", kafkaVersion: "3.7" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={onChange} />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ kafkaVersion: "4.1" }));
+    expect(await screen.findByText("KRaft mode")).toBeInTheDocument();
+  });
+
+  it("does not offer Detect before there are bootstrap servers to ask", () => {
+    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Detect cluster version" })).toBeDisabled();
+  });
+
+  it("leaves the version alone when the broker suggests none", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "unknown",
+        processRoles: null,
+        interBrokerProtocolVersion: null,
+        suggestedVersion: null,
+        note: "The broker returned neither config.",
+      }),
+    });
+    const draft = { ...emptyDraft(), bootstrapServers: "localhost:9092" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={onChange} />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    expect(await screen.findByText("Mode could not be determined")).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
