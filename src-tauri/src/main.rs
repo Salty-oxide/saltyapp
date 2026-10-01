@@ -203,6 +203,7 @@ fn main() {
             commands::connections::connection_ping_bootstrap,
             commands::connections::connection_ping_zookeeper,
             commands::connections::connection_test,
+            commands::connections::connection_detect_version,
             commands::connections::connection_connect,
             commands::connections::connection_disconnect,
             commands::connections::connection_is_connected,
