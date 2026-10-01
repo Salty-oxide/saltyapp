@@ -22,7 +22,7 @@ export const KRAFT_DOCS_URL = "https://kafka.apache.org/documentation/#kraft";
  */
 export function KRaftNotice() {
   return (
-    <section className="connection-modal-section" aria-label="KRaft">
+    <section className="connection-modal-section">
       <h3>KRaft</h3>
       <p className="connection-modal-hint">
         Kafka 4.0 removed ZooKeeper. Cluster metadata lives in the KRaft controller quorum, which

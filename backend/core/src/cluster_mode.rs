@@ -240,4 +240,46 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"mode\":\"zookeeper\""), "json was: {json}");
     }
+
+    // The four below were added after review found them reachable but
+    // unexercised by the original test list.
+
+    #[test]
+    fn unknown_mode_serializes_as_unknown() {
+        // The frontend's MetadataMode union is written against exactly
+        // "kraft" | "zookeeper" | "unknown"; this is the one variant no
+        // other serialization test covers.
+        let report = cluster_version_report(None, None);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"mode\":\"unknown\""), "json was: {json}");
+    }
+
+    #[test]
+    fn zookeeper_inferred_from_an_old_protocol_version_carries_no_note() {
+        // A distinct match arm from the present-but-empty path: this one is
+        // reached with process.roles absent entirely, and must still be
+        // unqualified — there is nothing tentative about it.
+        let report = cluster_version_report(None, Some("2.4-IV1"));
+        assert_eq!(report.mode, MetadataMode::Zookeeper);
+        assert_eq!(report.note, None);
+    }
+
+    #[test]
+    fn a_bare_major_protocol_version_settles_the_mode_but_offers_nothing() {
+        // `major_version_from` accepts "4" while `suggested_version_from`
+        // rejects it — the dropdown wants major.minor. So the mode is
+        // decided and there is deliberately no version to apply, and no
+        // note, because nothing was derived that needs qualifying.
+        let report = cluster_version_report(None, Some("4"));
+        assert_eq!(report.mode, MetadataMode::Kraft);
+        assert_eq!(report.suggested_version, None);
+        assert_eq!(report.note, None);
+    }
+
+    #[test]
+    fn an_unparseable_protocol_version_alone_is_unknown() {
+        let report = cluster_version_report(None, Some("latest"));
+        assert_eq!(report.mode, MetadataMode::Unknown);
+        assert_eq!(report.suggested_version, None);
+    }
 }

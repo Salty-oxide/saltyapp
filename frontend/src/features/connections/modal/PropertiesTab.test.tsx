@@ -185,6 +185,22 @@ describe("PropertiesTab", () => {
     expect(screen.getByRole("button", { name: "Ping zookeeper" })).toBeDisabled();
   });
 
+  it("still disables identity fields on 4.x, but leaves the KRaft link usable", () => {
+    // The KRaft notice deliberately sits outside the `disabled` fieldset the
+    // ZooKeeper section lived in: `disabled` locks connection *identity*
+    // while a cluster is connected, and this notice reads no draft state and
+    // only opens a documentation URL. Same reasoning as the Publishing
+    // checkbox. Without this test, nesting it back inside that fieldset
+    // would break nothing.
+    const draft = { ...emptyDraft(), kafkaVersion: "4.1" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} disabled />);
+
+    expect(screen.getByLabelText("Cluster name")).toBeEnabled();
+    expect(screen.getByLabelText("Bootstrap servers")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /4\.1/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Learn more about KRaft" })).toBeEnabled();
+  });
+
   describe("Publishing", () => {
     it("starts with publishing switched off", () => {
       renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
