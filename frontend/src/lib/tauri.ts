@@ -43,7 +43,6 @@ export const KAFKA_VERSIONS = [
   "2.6",
   "2.7",
   "2.8",
-  "2.9",
   "3.0",
   "3.1",
   "3.2",
@@ -52,7 +51,33 @@ export const KAFKA_VERSIONS = [
   "3.5",
   "3.6",
   "3.7",
+  "3.8",
+  "3.9",
+  "4.0",
+  "4.1",
+  "4.2",
+  "4.3",
 ] as const;
+
+/**
+ * Whether this version's clusters can only be KRaft — Kafka 4.0 removed
+ * ZooKeeper outright, so the modal's ZooKeeper section is meaningless from
+ * there on, and a 4.x connection must not persist ZooKeeper settings.
+ *
+ * Note what this is *not* used for: `kafkaVersion` drives no librdkafka
+ * property anywhere in the app (see `backend/kafka/src/config.rs`, which
+ * never reads it). It is stored metadata, and this predicate is the one
+ * place it changes behaviour.
+ *
+ * An unparseable or unlisted version returns `false` on purpose. "Unknown"
+ * has to mean "hide nothing" — a row written by an older build, or a
+ * version this build does not offer, must not lose its ZooKeeper settings
+ * because the string could not be read.
+ */
+export function isKRaftOnly(version: string): boolean {
+  const major = Number.parseInt(version, 10);
+  return Number.isFinite(major) && major >= 4;
+}
 
 export type SchemaFormat = "avro" | "protobuf";
 
