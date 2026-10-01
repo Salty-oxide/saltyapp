@@ -413,4 +413,19 @@ describe("Kafka 4.x and ZooKeeper", () => {
 
     expect(validateDraft(draft)).toBe("Zookeeper host is required when Zookeeper is enabled");
   });
+
+  it("agrees between validation and persistence about whether zookeeper applies", () => {
+    // The guard in validateDraft and the gate in toNewConnection are the same
+    // predicate. If they ever diverge, a user is blocked on a field that was
+    // never going to be saved — or worse, not blocked on one that was.
+    const base = { ...emptyDraft(), name: "c", bootstrapServers: "localhost:9092", zookeeperEnabled: true };
+
+    for (const kafkaVersion of ["3.9", "4.0", "4.3"]) {
+      const draft = { ...base, kafkaVersion, zookeeperHost: "", zookeeperPort: "" };
+      const demandsAHost = validateDraft(draft) !== null;
+      const persistsZookeeper = toNewConnection({ ...draft, zookeeperHost: "zk", zookeeperPort: "2181" })
+        .zookeeperEnabled;
+      expect(demandsAHost).toBe(persistsZookeeper);
+    }
+  });
 });

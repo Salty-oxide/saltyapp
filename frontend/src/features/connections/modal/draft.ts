@@ -73,13 +73,23 @@ export function emptyDraft(): ConnectionDraft {
   };
 }
 
+/**
+ * Whether this draft's ZooKeeper settings apply at all — enabled *and* on a
+ * version that can still run ZooKeeper.
+ *
+ * One function rather than the same two-term condition written out in
+ * `validateDraft` and `toNewConnection`, because those two must agree: if
+ * validation demands a host that the wire conversion then discards, a user
+ * is blocked on a field that was never going to be saved.
+ */
+function zookeeperUsable(draft: ConnectionDraft): boolean {
+  return draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion);
+}
+
 export function validateDraft(draft: ConnectionDraft): string | null {
   if (draft.name.trim().length === 0) return "Cluster name is required";
   if (draft.bootstrapServers.trim().length === 0) return "Bootstrap servers is required";
-  // Not `draft.zookeeperEnabled` alone: on 4.x the ZooKeeper section is
-  // hidden, so demanding its fields would block a save on an error naming
-  // inputs the user cannot see. `toNewConnection` discards them anyway.
-  if (draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion)) {
+  if (zookeeperUsable(draft)) {
     if (draft.zookeeperHost.trim().length === 0) {
       return "Zookeeper host is required when Zookeeper is enabled";
     }
@@ -102,17 +112,17 @@ export function toNewConnection(draft: ConnectionDraft): NewConnection {
   // `connections_export` writes from it — claim something no 4.x cluster
   // can be doing. The draft itself is left alone, so switching 4.1 -> 3.9
   // inside one modal session brings a typed host back.
-  const zookeeperUsable = draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion);
-  const zookeeperHost = zookeeperUsable ? nullableTrim(draft.zookeeperHost) : null;
+  const zookeeperIsUsable = zookeeperUsable(draft);
+  const zookeeperHost = zookeeperIsUsable ? nullableTrim(draft.zookeeperHost) : null;
   const zookeeperPort =
-    zookeeperUsable && draft.zookeeperPort.trim().length > 0 ? Number(draft.zookeeperPort) : null;
-  const zookeeperChrootPath = zookeeperUsable ? nullableTrim(draft.zookeeperChrootPath) : null;
+    zookeeperIsUsable && draft.zookeeperPort.trim().length > 0 ? Number(draft.zookeeperPort) : null;
+  const zookeeperChrootPath = zookeeperIsUsable ? nullableTrim(draft.zookeeperChrootPath) : null;
 
   return {
     name: draft.name.trim(),
     bootstrapServers: draft.bootstrapServers.trim(),
     kafkaVersion: draft.kafkaVersion,
-    zookeeperEnabled: zookeeperUsable,
+    zookeeperEnabled: zookeeperIsUsable,
     zookeeperHost,
     zookeeperPort,
     zookeeperChrootPath,
