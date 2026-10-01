@@ -1,4 +1,4 @@
-import { Connection, KAFKA_VERSIONS, NewConnection, SaslMechanism, SecurityProtocol } from "../../../lib/tauri";
+import { Connection, isKRaftOnly, KAFKA_VERSIONS, NewConnection, SaslMechanism, SecurityProtocol } from "../../../lib/tauri";
 
 /**
  * Editable form state for the New Connection modal. Every field is a plain
@@ -76,7 +76,10 @@ export function emptyDraft(): ConnectionDraft {
 export function validateDraft(draft: ConnectionDraft): string | null {
   if (draft.name.trim().length === 0) return "Cluster name is required";
   if (draft.bootstrapServers.trim().length === 0) return "Bootstrap servers is required";
-  if (draft.zookeeperEnabled) {
+  // Not `draft.zookeeperEnabled` alone: on 4.x the ZooKeeper section is
+  // hidden, so demanding its fields would block a save on an error naming
+  // inputs the user cannot see. `toNewConnection` discards them anyway.
+  if (draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion)) {
     if (draft.zookeeperHost.trim().length === 0) {
       return "Zookeeper host is required when Zookeeper is enabled";
     }
@@ -93,18 +96,23 @@ function nullableTrim(value: string): string | null {
 }
 
 export function toNewConnection(draft: ConnectionDraft): NewConnection {
-  const zookeeperHost = draft.zookeeperEnabled ? nullableTrim(draft.zookeeperHost) : null;
+  // Kafka 4.0 removed ZooKeeper, so a 4.x connection must never persist
+  // ZooKeeper settings: the section is hidden at that point, and a stored
+  // `zookeeperEnabled: true` would make the row — and the file
+  // `connections_export` writes from it — claim something no 4.x cluster
+  // can be doing. The draft itself is left alone, so switching 4.1 -> 3.9
+  // inside one modal session brings a typed host back.
+  const zookeeperUsable = draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion);
+  const zookeeperHost = zookeeperUsable ? nullableTrim(draft.zookeeperHost) : null;
   const zookeeperPort =
-    draft.zookeeperEnabled && draft.zookeeperPort.trim().length > 0
-      ? Number(draft.zookeeperPort)
-      : null;
-  const zookeeperChrootPath = draft.zookeeperEnabled ? nullableTrim(draft.zookeeperChrootPath) : null;
+    zookeeperUsable && draft.zookeeperPort.trim().length > 0 ? Number(draft.zookeeperPort) : null;
+  const zookeeperChrootPath = zookeeperUsable ? nullableTrim(draft.zookeeperChrootPath) : null;
 
   return {
     name: draft.name.trim(),
     bootstrapServers: draft.bootstrapServers.trim(),
     kafkaVersion: draft.kafkaVersion,
-    zookeeperEnabled: draft.zookeeperEnabled,
+    zookeeperEnabled: zookeeperUsable,
     zookeeperHost,
     zookeeperPort,
     zookeeperChrootPath,

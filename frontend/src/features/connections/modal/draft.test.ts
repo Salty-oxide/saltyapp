@@ -11,7 +11,7 @@ describe("emptyDraft", () => {
   });
 
   it("defaults the kafka version to the newest supported version", () => {
-    expect(emptyDraft().kafkaVersion).toBe("3.7");
+    expect(emptyDraft().kafkaVersion).toBe("4.3");
   });
 });
 
@@ -32,6 +32,7 @@ describe("validateDraft", () => {
     const draft = emptyDraft();
     draft.name = "Local";
     draft.bootstrapServers = "localhost:9092";
+    draft.kafkaVersion = "3.9"; // a version that can still run zookeeper
     draft.zookeeperEnabled = true;
     draft.zookeeperPort = "2181";
     expect(validateDraft(draft)).toBe("Zookeeper host is required when Zookeeper is enabled");
@@ -41,6 +42,7 @@ describe("validateDraft", () => {
     const draft = emptyDraft();
     draft.name = "Local";
     draft.bootstrapServers = "localhost:9092";
+    draft.kafkaVersion = "3.9"; // a version that can still run zookeeper
     draft.zookeeperEnabled = true;
     draft.zookeeperHost = "zk.local";
     expect(validateDraft(draft)).toBe("Zookeeper port is required when Zookeeper is enabled");
@@ -87,6 +89,7 @@ describe("toNewConnection", () => {
     const draft = emptyDraft();
     draft.name = "Local";
     draft.bootstrapServers = "localhost:9092";
+    draft.kafkaVersion = "3.9"; // a version that can still run zookeeper
     draft.zookeeperEnabled = true;
     draft.zookeeperHost = "zk.local";
     draft.zookeeperPort = "2181";
@@ -333,5 +336,81 @@ describe("allowPublishing through the draft", () => {
     const before = emptyDraft();
     const after = { ...before, allowPublishing: true };
     expect(draftsEqual(before, after)).toBe(false);
+  });
+});
+
+describe("Kafka 4.x and ZooKeeper", () => {
+  it("never persists zookeeper settings on a 4.x connection", () => {
+    // Kafka 4.0 removed ZooKeeper, so a stored zookeeperEnabled: true on a
+    // 4.x row would make the DB — and connections_export's file — claim
+    // something no 4.x cluster can be doing.
+    const draft = {
+      ...emptyDraft(),
+      name: "prod",
+      bootstrapServers: "localhost:9092",
+      kafkaVersion: "4.1",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.internal",
+      zookeeperPort: "2181",
+      zookeeperChrootPath: "/kafka",
+    };
+
+    const wire = toNewConnection(draft);
+
+    expect(wire.zookeeperEnabled).toBe(false);
+    expect(wire.zookeeperHost).toBeNull();
+    expect(wire.zookeeperPort).toBeNull();
+    expect(wire.zookeeperChrootPath).toBeNull();
+  });
+
+  it("still persists zookeeper settings on 3.9, the last version that can run it", () => {
+    const draft = {
+      ...emptyDraft(),
+      name: "legacy",
+      bootstrapServers: "localhost:9092",
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.internal",
+      zookeeperPort: "2181",
+      zookeeperChrootPath: "/kafka",
+    };
+
+    const wire = toNewConnection(draft);
+
+    expect(wire.zookeeperEnabled).toBe(true);
+    expect(wire.zookeeperHost).toBe("zk.internal");
+    expect(wire.zookeeperPort).toBe(2181);
+    expect(wire.zookeeperChrootPath).toBe("/kafka");
+  });
+
+  it("does not demand a zookeeper host on 4.x, where the section is hidden", () => {
+    // Without this guard, someone who had ZooKeeper enabled and then picked
+    // 4.1 is blocked from saving by a validation error about fields they
+    // can no longer see.
+    const draft = {
+      ...emptyDraft(),
+      name: "prod",
+      bootstrapServers: "localhost:9092",
+      kafkaVersion: "4.1",
+      zookeeperEnabled: true,
+      zookeeperHost: "",
+      zookeeperPort: "",
+    };
+
+    expect(validateDraft(draft)).toBeNull();
+  });
+
+  it("still demands a zookeeper host on 3.9 when zookeeper is enabled", () => {
+    const draft = {
+      ...emptyDraft(),
+      name: "legacy",
+      bootstrapServers: "localhost:9092",
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "",
+      zookeeperPort: "",
+    };
+
+    expect(validateDraft(draft)).toBe("Zookeeper host is required when Zookeeper is enabled");
   });
 });
