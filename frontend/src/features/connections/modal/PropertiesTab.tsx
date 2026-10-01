@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Dropdown } from "../../../components/Dropdown";
 import { KAFKA_VERSIONS } from "../../../lib/tauri";
 import { usePingBootstrapServers, usePingZookeeper } from "../useConnections";
@@ -5,6 +6,22 @@ import { ConnectionDraft } from "./draft";
 import { PingResult } from "./PingResult";
 
 const KAFKA_VERSION_OPTIONS = KAFKA_VERSIONS.map((version) => ({ id: version, label: version }));
+
+/**
+ * The offered versions, plus the draft's own value when it isn't one of them.
+ *
+ * `Dropdown` labels its toggle with `options.find(...) ?? options[0]`, so a
+ * connection saved with a version this build no longer offers — 2.9, which
+ * Kafka never released, was offered until recently — would *display* 0.11
+ * while still storing 2.9, and Update would stay disabled because the draft
+ * never diverged from its snapshot. Appending keeps the display truthful;
+ * the value simply can't be newly selected. It also means a version Detect
+ * reads off a future broker shows up rather than being swallowed.
+ */
+function versionOptions(current: string) {
+  if (KAFKA_VERSION_OPTIONS.some((option) => option.id === current)) return KAFKA_VERSION_OPTIONS;
+  return [...KAFKA_VERSION_OPTIONS, { id: current, label: current }];
+}
 
 export interface ConnectionTabProps {
   draft: ConnectionDraft;
@@ -16,6 +33,7 @@ export interface ConnectionTabProps {
 export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionTabProps) {
   const pingBootstrap = usePingBootstrapServers();
   const pingZookeeper = usePingZookeeper();
+  const kafkaVersionOptions = useMemo(() => versionOptions(draft.kafkaVersion), [draft.kafkaVersion]);
 
   return (
     <div role="tabpanel" aria-label="Properties" className="connection-modal-tab-panel">
@@ -48,7 +66,7 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
           <Dropdown
             label="Kafka cluster version"
             ariaLabel="Kafka cluster version"
-            options={KAFKA_VERSION_OPTIONS}
+            options={kafkaVersionOptions}
             displayedId={draft.kafkaVersion}
             appliedId={draft.kafkaVersion}
             onCommit={(id) => onChange({ kafkaVersion: id })}

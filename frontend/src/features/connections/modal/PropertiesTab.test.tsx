@@ -25,19 +25,45 @@ describe("PropertiesTab", () => {
 
     expect(screen.getByLabelText("Cluster name")).toBeInTheDocument();
     expect(screen.getByLabelText("Bootstrap servers")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /3\.7/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /4\.3/ })).toBeInTheDocument();
   });
 
-  it("lists 0.11 through 3.7 as kafka version options", async () => {
+  it("lists 0.11 through 4.3 as kafka version options", async () => {
     const user = userEvent.setup();
     renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: /3\.7/ }));
+    await user.click(screen.getByRole("button", { name: /4\.3/ }));
 
     expect(screen.getByRole("option", { name: "0.11" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "2.9" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "3.0" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "✓ 3.7" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "3.8" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "3.9" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "4.0" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "✓ 4.3" })).toBeInTheDocument();
+  });
+
+  it("does not offer 2.9, which Kafka never released", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: /4\.3/ }));
+
+    expect(screen.queryByRole("option", { name: "2.9" })).not.toBeInTheDocument();
+  });
+
+  it("still displays a stored version the list no longer offers", async () => {
+    // Dropdown falls back to options[0] for an unknown displayedId, so
+    // without appending this the row would render as 0.11 while the DB
+    // still said 2.9 — and Update would stay disabled, because the draft
+    // never changed. Appending keeps the display honest.
+    const user = userEvent.setup();
+    const draft = { ...emptyDraft(), kafkaVersion: "2.9" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /2\.9/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /2\.9/ }));
+    expect(screen.getByRole("option", { name: "✓ 2.9" })).toBeInTheDocument();
   });
 
   it("calls onChange when the cluster name is typed", async () => {
@@ -118,7 +144,7 @@ describe("PropertiesTab", () => {
 
     expect(screen.getByLabelText("Cluster name")).toBeEnabled();
     expect(screen.getByLabelText("Bootstrap servers")).toBeDisabled();
-    expect(screen.getByRole("button", { name: /3\.7/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /4\.3/ })).toBeDisabled();
     expect(screen.getByLabelText("Enable Zookeeper")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper host")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper port")).toBeDisabled();
