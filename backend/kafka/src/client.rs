@@ -1756,11 +1756,20 @@ impl KafkaClient for RdKafkaClient {
             .map(|resource| resource.entries)
             .unwrap_or_default();
 
+        // `and_then`, not `map(... .unwrap_or_default())`: rdkafka reports a
+        // `value` of `None` when librdkafka hands back a null pointer, which
+        // the wire format uses for configs the broker marks `is_sensitive`
+        // and redacts. Defaulting that to `""` would be read as the *empty*
+        // `process.roles` a ZooKeeper-mode broker sends, so a redacted value
+        // would make Detect claim ZooKeeper on a KRaft cluster. Collapsing it
+        // to `None` instead reports `Unknown`, which is the honest answer and
+        // the safe direction to be wrong in. Neither config read here is
+        // sensitive today, so this is a guard rather than a live fix.
         let value_of = |name: &str| {
             entries
                 .iter()
                 .find(|entry| entry.name == name)
-                .map(|entry| entry.value.clone().unwrap_or_default())
+                .and_then(|entry| entry.value.clone())
         };
 
         Ok(cluster_version_report(
