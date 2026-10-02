@@ -46,6 +46,29 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   poisoning), and `-C target-cpu=native` would be wrong for a binary shipped
   to other people's machines.
 - Secrets (SASL password, schema registry credentials, keystore/truststore passwords) are stored as plaintext columns on `connections` and returned to the frontend as part of `Connection`. This was previously OS-keychain-backed (`kafkaoxide-secrets`, since removed); that approach was abandoned after keychain writes proved unreliable on Windows (Credential Manager silently failing for some users, with no working fallback for SASL-authenticated connections). Export (`connections_export`) still deliberately excludes every secret via `PortableConnection`'s field list.
+- **`kafka_version` drives no librdkafka property.** It is stored on
+  `connections`, carried in `PortableConnection`, and shown in the modal's
+  dropdown — and `backend/kafka/src/config.rs` never reads it. Its one
+  behavioural use is `isKRaftOnly` in `frontend/src/lib/tauri.ts`, which hides
+  the ZooKeeper section and makes `toNewConnection` null the ZooKeeper columns
+  from 4.0 on, since Kafka 4.0 removed ZooKeeper (3.9 is the last version that
+  can run it). There is deliberately nothing to configure from it: every
+  offered version is 0.11+, so ApiVersions negotiation settles the protocol,
+  and **no client config can point at a KRaft controller quorum** — clients
+  only ever talk to `bootstrap.servers`, `bootstrap.controllers` (KIP-919) is
+  Java-admin-only, and librdkafka binds nothing for it. The list also drops
+  **2.9**, which Kafka never released; `PropertiesTab` appends any
+  stored-but-unlisted version as its own option, because `Dropdown` falls back
+  to `options[0]` and would otherwise display `0.11` for a row still storing
+  `2.9` — with Update disabled, since the draft never diverged.
+- **Vitest does not type-check, so a green frontend suite says nothing about
+  whether the frontend compiles.** `npm --prefix frontend run build` (`tsc &&
+  vite build`) is the only gate on type errors. This is not theoretical: a
+  `Pick<UseMutationResult<…>, "isSuccess" | "data" | …>` loses the
+  discriminated-union correlation between the two, so `data` stays possibly
+  `undefined` inside an `if (mutation.isSuccess)` branch — `DetectResult`
+  needed an assertion for exactly that, while `PingResult` gets away with the
+  same `Pick` only because it compares `data` rather than dereferencing it.
 - Publishing is gated in four places, and the broker is the only authority
   among them: a per-connection `allow_publishing` column (`DEFAULT 0`, so every
   connection starts unable to publish), a connected-cluster check, a cached
@@ -86,6 +109,30 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   its errors) and reports `Indeterminate` rather than guessing the rest. Do not
   "simplify" this back to reading the error code; `backend/kafka/tests/
   acl_describe.rs` fails against a real broker if you do.
+- **`detect_cluster_version` returns `Ok` on an authorization refusal, and
+  that is the opposite of `authorizer_class` right beside it.** Both read
+  broker config via `DescribeConfigs`, and a principal without that
+  permission gets an empty *successful* result either way. `authorizer_class`
+  collapses every failure to `None` because it silently qualifies an ACL
+  listing and must never turn a good answer into a bad one. Detect's result
+  *is* the user's answer, so an empty response becomes
+  `MetadataMode::Unknown` carrying a note, and only a transport failure is an
+  `Err`. Both paths are pinned against real brokers:
+  `backend/kafka/tests/cluster_mode_detect.rs` for the KRaft success path, and
+  `cluster_mode_authorization.rs` for the refusal — the latter gated on
+  `SALTY_E2E_ACL_BOOTSTRAP`, because on the ordinary e2e broker (no
+  authorizer) `reader` reads configs happily and the test would pass for the
+  wrong reason, the same trap `publish_authorization.rs` documents. The
+  derivation rules themselves live in `salty_core::cluster_mode`, not
+  `salty-kafka`, so every branch is unit-testable without a broker — same
+  reason as `publish_refusal` and `acl_effective`. **Known limitation:**
+  `.and_then(|resource| resource.ok())` discards the per-resource error code,
+  so a resource-level failure that is *not* a refusal — the chosen broker
+  dying between the metadata fetch and the `DescribeConfigs` call — also
+  reports `Unknown`. That is the same ambiguity above, minus the second
+  question: nothing comparable to `authorizer.class.name` distinguishes
+  "refused" from "that broker went away", which is why the note says to choose
+  the version manually rather than naming a cause as fact.
 - ACL **pattern matching is the broker's job, not ours.** A `DescribeAcls`
   filter sent with `RD_KAFKA_RESOURCE_PATTERN_MATCH` makes the broker resolve
   which literal, prefixed and wildcard patterns govern a given resource name,
@@ -110,7 +157,7 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   cancellation / byte-budget / idle-timeout logic inline.
 - `package-lock.json` and `Cargo.lock` are both gitignored — installs are not lockfile-pinned.
 - Coverage is enforced at 80% (lines/statements/functions/branches) by
-  `frontend/vitest.config.ts`'s `thresholds`, so `npm --prefix frontend test:coverage`
+  `frontend/vitest.config.ts`'s `thresholds`, so `npm --prefix frontend run test:coverage`
   fails rather than merely reports when it slips. There is no equivalent gate on
   the Rust side — `scripts/coverage.sh` prints the per-crate table instead.
 - `scripts/coverage.sh` produces the two LCOV files `sonar-project.properties`

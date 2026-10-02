@@ -1735,11 +1735,20 @@ impl KafkaClient for RdKafkaClient {
             .await
             .map_err(|err| failure_report(&err, &err.to_string(), "failed to describe broker config"))?;
 
-        // A per-resource error here is the authorization case, not a
-        // transport one: the request reached the broker and the broker
-        // answered "no". That collapses to no entries, which
+        // A per-resource error collapses to no entries, which
         // `cluster_version_report` reports as Unknown with a note — see this
-        // method's doc comment for why it is not an `Err`.
+        // method's doc comment for why that is not an `Err`.
+        //
+        // Note the error *code* is discarded here, so this is not purely the
+        // authorization case: a resource-level failure that is not a refusal
+        // — the broker picked above dying between the metadata fetch and this
+        // call — lands on Unknown too. That is the same ambiguity
+        // `AclAvailability` documents, minus the second question:
+        // `authorizer_class` can recover ACL availability from
+        // `authorizer.class.name`, and nothing comparable distinguishes
+        // "refused" from "that broker went away". Which is why the note tells
+        // the user to choose the version manually rather than naming a cause
+        // as fact.
         let entries = results
             .into_iter()
             .next()

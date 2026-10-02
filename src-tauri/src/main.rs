@@ -53,9 +53,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        // Only the KRaft explainer's "Learn more" button uses this, and the
-        // capability below is scoped to kafka.apache.org — this is the app's
-        // first outbound-link surface and is deliberately held to one host.
+        // Scoped in `capabilities/default.json` to `https://kafka.apache.org/*`
+        // — this is the app's only outbound-link surface and is deliberately
+        // held to one host. That pattern was verified against the plugin's own
+        // matcher (`glob::Pattern` with `require_literal_separator: false`), so
+        // the single trailing `*` covers both the path and the `#fragment` of
+        // `KRAFT_DOCS_URL`. Note `opener:default` would instead grant a blanket
+        // `https://*`, which is why the narrow permission is named explicitly.
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();

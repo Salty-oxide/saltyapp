@@ -70,8 +70,19 @@ async fn the_super_user_reads_the_same_cluster_fine() {
     // The control: same broker, same call, a principal that *may* read
     // configs. Without this, the test above would pass just as well against
     // a broker that was simply unreachable.
+    //
+    // Asserting the real values rather than merely `!= Unknown`: that weaker
+    // form would still pass if a mode were ever reported with no data behind
+    // it. It cannot be today — the mode is derived from `process_roles`'s
+    // presence — but the control is the wrong place to lean on that.
+    //
+    // `admin` is the only principal that works here: the fixture script
+    // grants `writer` and `reader` topic-level ACLs only, so neither can read
+    // cluster configs either.
     let bootstrap = acl_broker!();
     let report = detect_as(&bootstrap, "admin", "admin-secret").await;
 
-    assert_ne!(report.mode, MetadataMode::Unknown, "report was: {report:?}");
+    assert_eq!(report.mode, MetadataMode::Kraft, "report was: {report:?}");
+    let roles = report.process_roles.as_deref().expect("a super user may read process.roles");
+    assert!(!roles.trim().is_empty(), "process.roles was: {roles:?}");
 }
