@@ -346,4 +346,52 @@ describe("PropertiesTab", () => {
     // that stopped being true is gone.
     expect(screen.getByText("KRaft mode")).toBeInTheDocument();
   });
+
+  it("drops the zookeeper note when a later detect reports nothing", async () => {
+    // `hidZookeeper` is recomputed on every successful detect, not only when
+    // one carries a suggestion. Without that, the second detect below leaves
+    // the first one's note standing — so the panel would read "Mode could
+    // not be determined" and "this broker reports KRaft" at the same time.
+    function Harness() {
+      const [draft, setDraft] = useState({
+        ...emptyDraft(),
+        bootstrapServers: "localhost:9092",
+        kafkaVersion: "3.9",
+      });
+      return (
+        <PropertiesTab draft={draft} onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))} />
+      );
+    }
+
+    const user = userEvent.setup();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: null,
+      }),
+    });
+    renderWithClient(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+    expect(await screen.findByText(/ZooKeeper settings are hidden/)).toBeInTheDocument();
+
+    // Now the same cluster refuses DescribeConfigs — no mode, no suggestion.
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "unknown",
+        processRoles: null,
+        interBrokerProtocolVersion: null,
+        suggestedVersion: null,
+        note: "The broker returned neither config.",
+      }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    expect(await screen.findByText("Mode could not be determined")).toBeInTheDocument();
+    expect(screen.queryByText(/ZooKeeper settings are hidden/)).not.toBeInTheDocument();
+  });
 });

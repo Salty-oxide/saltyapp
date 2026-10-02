@@ -83,20 +83,29 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
               onClick={() =>
                 detect.mutate(toNewConnection(draft), {
                   onSuccess: (report) => {
+                    // Recomputed on *every* successful detect, before the
+                    // early return below. Otherwise a detect that yields no
+                    // suggestion leaves the previous run's value standing,
+                    // and the note goes on claiming "this broker reports
+                    // KRaft" directly beneath a result line reading "Mode
+                    // could not be determined".
+                    //
+                    // Keyed on the *applied* version rather than the report's
+                    // mode, so it marks the moment the section actually went
+                    // away — not a broker reporting KRaft to a connection
+                    // already on 4.x, which had no section to lose.
+                    setHidZookeeper(
+                      report.suggestedVersion !== null &&
+                        !isKRaftOnly(draft.kafkaVersion) &&
+                        isKRaftOnly(report.suggestedVersion),
+                    );
+
                     // Applied, not asserted: on a KRaft cluster this is
                     // derived from inter.broker.protocol.version rather than
                     // from the authoritative metadata.version, so the user
                     // can still change it. An unlisted value is fine —
                     // `versionOptions` appends it.
                     if (report.suggestedVersion === null) return;
-                    // Keyed on the *applied* version rather than the report's
-                    // mode, so the note appears exactly when the section
-                    // actually went away — not when the broker says KRaft on
-                    // a connection that was already 4.x and had no ZooKeeper
-                    // section to lose.
-                    setHidZookeeper(
-                      !isKRaftOnly(draft.kafkaVersion) && isKRaftOnly(report.suggestedVersion),
-                    );
                     onChange({ kafkaVersion: report.suggestedVersion });
                   },
                 })
