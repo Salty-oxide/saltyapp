@@ -105,7 +105,17 @@ export function PropertiesTab({ draft, onChange, disabled = false }: ConnectionT
               Detect
             </button>
           </div>
-          <DetectResult mutation={detect} hidZookeeper={hidZookeeper} />
+          {/* `&& isKRaftOnly(...)` so the note survives only while the
+              section is actually gone. `hidZookeeper` records that a Detect
+              *crossed* into KRaft-only territory, which is what makes the
+              note worth showing at all — but it is set in `onSuccess` and
+              never recomputed, so on its own it would keep claiming the
+              section is hidden after the user manually picks 3.9 again, with
+              the ZooKeeper fields rendered directly beneath the claim. */}
+          <DetectResult
+            mutation={detect}
+            hidZookeeper={hidZookeeper && isKRaftOnly(draft.kafkaVersion)}
+          />
         </fieldset>
       </section>
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { setInvokeHandlers } from "../../../lib/testInvoke";
 import { emptyDraft } from "./draft";
 import { PropertiesTab } from "./PropertiesTab";
@@ -294,5 +294,56 @@ describe("PropertiesTab", () => {
 
     expect(await screen.findByText("Mode could not be determined")).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("stops claiming zookeeper is hidden once the version is moved back", async () => {
+    // Detect sets the "hidden" note when it crosses into KRaft-only
+    // territory, but it is never recomputed afterwards. Without gating the
+    // note on the *current* version, reverting to 3.9 brings the ZooKeeper
+    // fields back while the note above them still says they are hidden — a
+    // UI that contradicts itself a few pixels apart.
+    //
+    // This needs a *stateful* parent: PropertiesTab is controlled, so with a
+    // stub onChange the draft never moves and Detect's own applied version
+    // never lands either.
+    function Harness() {
+      const [draft, setDraft] = useState({
+        ...emptyDraft(),
+        bootstrapServers: "localhost:9092",
+        kafkaVersion: "3.9",
+      });
+      return (
+        <>
+          <PropertiesTab draft={draft} onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))} />
+          <button type="button" onClick={() => setDraft((d) => ({ ...d, kafkaVersion: "3.9" }))}>
+            revert to 3.9
+          </button>
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: "derived from inter.broker.protocol.version",
+      }),
+    });
+    renderWithClient(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+    expect(await screen.findByText(/ZooKeeper settings are hidden/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Enable Zookeeper")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "revert to 3.9" }));
+
+    expect(screen.queryByText(/ZooKeeper settings are hidden/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
+    // The rest of the detection result is still on screen — only the claim
+    // that stopped being true is gone.
+    expect(screen.getByText("KRaft mode")).toBeInTheDocument();
   });
 });
