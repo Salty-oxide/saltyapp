@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ClusterVersionReport, ConnectionStatus, ImportSummary, NewConnection } from "../../lib/tauri";
+import { api, ConnectionStatus, ImportSummary, NewConnection } from "../../lib/tauri";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { useMessageViewerStore } from "../workspace/useMessageViewerStore";
 import { clearConnectionState } from "./clearConnectionState";
@@ -134,13 +134,6 @@ export function usePingZookeeper() {
 export function useTestConnection() {
   return useMutation<ConnectionStatus, Error, NewConnection>({
     mutationFn: (newConnection: NewConnection) => api.testConnection(newConnection),
-  });
-}
-
-/** Backs the Detect button next to "Kafka cluster version" in the New Connection modal. */
-export function useDetectClusterVersion() {
-  return useMutation<ClusterVersionReport, Error, NewConnection>({
-    mutationFn: (newConnection: NewConnection) => api.detectClusterVersion(newConnection),
   });
 }
 

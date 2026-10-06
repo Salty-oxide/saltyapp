@@ -109,6 +109,7 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   its errors) and reports `Indeterminate` rather than guessing the rest. Do not
   "simplify" this back to reading the error code; `backend/kafka/tests/
   acl_describe.rs` fails against a real broker if you do.
+- **The Properties tab has no Detect button, and `connection_detect_version` is gone from `src-tauri`** (removed in 1.1.5; the version is picked from the dropdown). `salty_kafka`'s `detect_cluster_version` and `salty_core::cluster_mode` are deliberately still there with their tests — only the command layer was dropped, because `src-tauri` cannot be compiled here and a backend-wide removal would be unverifiable. Delete them together if nothing needs them.
 - **`detect_cluster_version` returns `Ok` on an authorization refusal, and
   that is the opposite of `authorizer_class` right beside it.** Both read
   broker config via `DescribeConfigs`, and a principal without that

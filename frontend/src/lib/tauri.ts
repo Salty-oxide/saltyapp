@@ -79,26 +79,6 @@ export function isKRaftOnly(version: string): boolean {
   return Number.isFinite(major) && major >= 4;
 }
 
-/** `MetadataMode` in `salty_core::cluster_mode`, as camelCase JSON. */
-export type MetadataMode = "kraft" | "zookeeper" | "unknown";
-
-/**
- * What the Properties tab's Detect button learned from the cluster.
- *
- * Every field is nullable because this comes from a broker's answer to
- * `DescribeConfigs`, and a principal who may not read broker configs gets
- * an empty *successful* result rather than a refusal — so "could not tell"
- * arrives as a `mode` of `"unknown"` plus a `note`, not as a rejection.
- */
-export interface ClusterVersionReport {
-  mode: MetadataMode;
-  processRoles: string | null;
-  interBrokerProtocolVersion: string | null;
-  /** The dropdown value to apply — a suggestion, which the user can override. */
-  suggestedVersion: string | null;
-  note: string | null;
-}
-
 export type SchemaFormat = "avro" | "protobuf";
 
 export interface Connection {
@@ -525,12 +505,6 @@ export const api = {
     }),
   testConnection: (newConnection: NewConnection) =>
     invoke<ConnectionStatus>("connection_test", { newConnection }),
-  detectClusterVersion: (newConnection: NewConnection) =>
-    invoke<ClusterVersionReport>("connection_detect_version", {
-      newConnection,
-      // A broker read, like listBrokers/listTopics — not the ZooKeeper ping's timeout.
-      timeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
-    }),
   connectConnection: (id: string) => invoke<ConnectionStatus>("connection_connect", { id }),
   disconnectConnection: (id: string) => invoke<void>("connection_disconnect", { id }),
   isConnectionConnected: (id: string) => invoke<boolean>("connection_is_connected", { id }),

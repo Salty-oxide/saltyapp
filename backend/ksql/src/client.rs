@@ -207,12 +207,12 @@ impl KsqlClient {
                     let line = decoded.trim();
                     if !line.is_empty() {
                         let mut handled = false;
-                        if header.is_none() {
-                            if let Some(parsed) = parse_header(line) {
-                                on_header(&parsed);
-                                header = Some(parsed);
-                                handled = true;
-                            }
+                        if header.is_none()
+                            && let Some(parsed) = parse_header(line)
+                        {
+                            on_header(&parsed);
+                            header = Some(parsed);
+                            handled = true;
                         }
                         if !handled && let Some(row) = parse_row(line) {
                             on_row(row);

@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use error_stack::ResultExt;
 use salty_core::{
-    partition_importable, select_for_export, AppError, ClusterVersionReport, Connection, ConnectionExportFile,
+    partition_importable, select_for_export, AppError, Connection, ConnectionExportFile,
     ConnectionStatus, MessagesBatchEvent, NewConnection,
 };
 use salty_kafka::BrokerSslConfig;
@@ -329,41 +329,6 @@ pub async fn connection_test(
                 keystore_password: new_connection.ssl_keystore_password.as_deref(),
                 keystore_key_password: new_connection.ssl_keystore_key_password.as_deref(),
             },
-        )
-        .await?)
-}
-
-/// Backs the Detect button next to "Kafka cluster version" in the New
-/// Connection modal.
-///
-/// Takes the whole `NewConnection` for the same reason `connection_test`
-/// does: `DescribeConfigs` is an authenticated call, so the Security &
-/// Authentication tab's protocol, SASL and TLS values all matter, and none
-/// of them are saved yet.
-///
-/// `timeout_ms` is the user's General settings > Brokers > Read Timeout —
-/// this is a broker read, like the tree's listings, not a ZooKeeper ping.
-#[tauri::command]
-pub async fn connection_detect_version(
-    state: State<'_, AppState>,
-    new_connection: NewConnection,
-    timeout_ms: u64,
-) -> Result<ClusterVersionReport, CommandError> {
-    Ok(state
-        .kafka
-        .detect_cluster_version(
-            &new_connection.bootstrap_servers,
-            new_connection.security_protocol,
-            new_connection.sasl_mechanism,
-            new_connection.sasl_username.as_deref(),
-            new_connection.sasl_password.as_deref(),
-            BrokerSslConfig {
-                truststore_location: new_connection.ssl_truststore_location.as_deref(),
-                keystore_location: new_connection.ssl_keystore_location.as_deref(),
-                keystore_password: new_connection.ssl_keystore_password.as_deref(),
-                keystore_key_password: new_connection.ssl_keystore_key_password.as_deref(),
-            },
-            Duration::from_millis(timeout_ms),
         )
         .await?)
 }
