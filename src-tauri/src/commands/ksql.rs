@@ -251,10 +251,10 @@ pub async fn ksql_query(
     // Best effort, and deliberately not fatal: the rows are already delivered,
     // and the query is very likely gone with the socket. Reporting a failure
     // here would turn a successful query into an error.
-    if let Some(query_id) = outcome.header.as_ref().and_then(|h| h.query_id.as_deref())
-        && outcome.cancelled
-    {
-        let _ = client.close_query(query_id).await;
+    if outcome.cancelled {
+        if let Some(query_id) = outcome.header.as_ref().and_then(|h| h.query_id.as_deref()) {
+            let _ = client.close_query(query_id).await;
+        }
     }
 
     Ok(KsqlQueryOutcome { cancelled: outcome.cancelled, row_count })
