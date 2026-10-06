@@ -24,6 +24,8 @@ struct ConnectionRow {
     sasl_oauth_url: Option<String>,
     schema_registry_endpoint: Option<String>,
     schema_registry_basic_auth_credentials: Option<String>,
+    ksqldb_endpoint: Option<String>,
+    ksqldb_basic_auth_credentials: Option<String>,
     schema_registry_trust_store_location: Option<String>,
     schema_registry_trust_store_password: Option<String>,
     schema_registry_keystore_location: Option<String>,
@@ -67,6 +69,8 @@ impl ConnectionRow {
             sasl_oauth_url: self.sasl_oauth_url,
             schema_registry_endpoint: self.schema_registry_endpoint,
             schema_registry_basic_auth_credentials: self.schema_registry_basic_auth_credentials,
+            ksqldb_endpoint: self.ksqldb_endpoint,
+            ksqldb_basic_auth_credentials: self.ksqldb_basic_auth_credentials,
             schema_registry_trust_store_location: self.schema_registry_trust_store_location,
             schema_registry_trust_store_password: self.schema_registry_trust_store_password,
             schema_registry_keystore_location: self.schema_registry_keystore_location,
@@ -101,9 +105,15 @@ pub async fn create(pool: &SqlitePool, new_conn: &NewConnection) -> Result<Conne
              ssl_truststore_location, ssl_truststore_password,
              ssl_keystore_location, ssl_keystore_password, ssl_keystore_key_password,
              allow_publishing,
-             created_at, updated_at
+             created_at, updated_at,
+             -- Appended, and numbered after every existing placeholder on
+             -- purpose. Slotting these in beside the other endpoint columns
+             -- would renumber thirteen binds, and two adjacent
+             -- `Option<String>` parameters swapped by a slip would compile
+             -- cleanly and quietly write each secret into the other's column.
+             ksqldb_endpoint, ksqldb_basic_auth_credentials
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?27)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?27, ?28, ?29)",
     )
     .bind(&id)
     .bind(&new_conn.name)
@@ -132,6 +142,8 @@ pub async fn create(pool: &SqlitePool, new_conn: &NewConnection) -> Result<Conne
     .bind(&new_conn.ssl_keystore_key_password)
     .bind(new_conn.allow_publishing)
     .bind(&now)
+    .bind(&new_conn.ksqldb_endpoint)
+    .bind(&new_conn.ksqldb_basic_auth_credentials)
     .execute(pool)
     .await
     .change_context(AppError::Db)
@@ -185,7 +197,10 @@ pub async fn update(pool: &SqlitePool, id: &str, new_conn: &NewConnection) -> Re
              ssl_truststore_location = ?20, ssl_truststore_password = ?21,
              ssl_keystore_location = ?22, ssl_keystore_password = ?23, ssl_keystore_key_password = ?24,
              allow_publishing = ?25,
-             updated_at = ?26
+             updated_at = ?26,
+             -- Numbered past `id = ?27` for the reason given on the insert
+             -- above: appending leaves every existing placeholder where it is.
+             ksqldb_endpoint = ?28, ksqldb_basic_auth_credentials = ?29
          WHERE id = ?27",
     )
     .bind(&new_conn.name)
@@ -215,6 +230,8 @@ pub async fn update(pool: &SqlitePool, id: &str, new_conn: &NewConnection) -> Re
     .bind(new_conn.allow_publishing)
     .bind(&now)
     .bind(id)
+    .bind(&new_conn.ksqldb_endpoint)
+    .bind(&new_conn.ksqldb_basic_auth_credentials)
     .execute(pool)
     .await
     .change_context(AppError::Db)
@@ -274,6 +291,8 @@ mod tests {
             sasl_oauth_url: None,
             schema_registry_endpoint: None,
             schema_registry_basic_auth_credentials: None,
+            ksqldb_endpoint: None,
+            ksqldb_basic_auth_credentials: None,
             schema_registry_trust_store_location: None,
             schema_registry_trust_store_password: None,
             schema_registry_keystore_location: None,
@@ -343,6 +362,64 @@ mod tests {
 
         let fetched = get(&pool, &created.id).await.unwrap();
         assert_eq!(fetched, created);
+    }
+
+    #[tokio::test]
+    async fn persists_the_ksqldb_endpoint_and_its_credential_in_their_own_columns() {
+        // Both are `Option<String>` and adjacent, which is exactly the pair a
+        // placeholder slip would swap — and a swap would compile, run, and
+        // quietly put the credential in the endpoint column. Distinct values
+        // on each side are what makes that visible.
+        let pool = test_pool().await;
+        let mut new_conn = plaintext_connection("With ksqlDB");
+        new_conn.ksqldb_endpoint = Some("http://localhost:8088".to_string());
+        new_conn.ksqldb_basic_auth_credentials = Some("ksql-user:ksql-pass".to_string());
+
+        let created = create(&pool, &new_conn).await.unwrap();
+
+        assert_eq!(created.ksqldb_endpoint.as_deref(), Some("http://localhost:8088"));
+        assert_eq!(
+            created.ksqldb_basic_auth_credentials.as_deref(),
+            Some("ksql-user:ksql-pass")
+        );
+        // The neighbouring endpoint column must be untouched by either bind.
+        assert_eq!(created.schema_registry_endpoint, None);
+    }
+
+    #[tokio::test]
+    async fn updates_the_ksqldb_fields_without_disturbing_the_others() {
+        let pool = test_pool().await;
+        let mut new_conn = plaintext_connection("Editable");
+        new_conn.sasl_password = Some("sasl-secret".to_string());
+        new_conn.schema_registry_endpoint = Some("http://registry:8081".to_string());
+        let created = create(&pool, &new_conn).await.unwrap();
+
+        new_conn.ksqldb_endpoint = Some("http://ksql:8088".to_string());
+        new_conn.ksqldb_basic_auth_credentials = Some("u:p".to_string());
+        let updated = update(&pool, &created.id, &new_conn).await.unwrap();
+
+        assert_eq!(updated.ksqldb_endpoint.as_deref(), Some("http://ksql:8088"));
+        assert_eq!(updated.ksqldb_basic_auth_credentials.as_deref(), Some("u:p"));
+        // `id` is bound at ?27 while the new columns are ?28/?29; if that
+        // ordering were wrong the update would hit the wrong row or none.
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.sasl_password.as_deref(), Some("sasl-secret"));
+        assert_eq!(
+            updated.schema_registry_endpoint.as_deref(),
+            Some("http://registry:8081")
+        );
+    }
+
+    #[tokio::test]
+    async fn defaults_the_ksqldb_fields_to_absent() {
+        // Most clusters run no ksqlDB server, and a connection without one is
+        // not misconfigured.
+        let pool = test_pool().await;
+
+        let created = create(&pool, &plaintext_connection("Plain")).await.unwrap();
+
+        assert_eq!(created.ksqldb_endpoint, None);
+        assert_eq!(created.ksqldb_basic_auth_credentials, None);
     }
 
     #[tokio::test]

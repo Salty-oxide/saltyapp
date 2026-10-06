@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { JsonTreeView } from "./JsonTreeView";
 
@@ -222,5 +222,169 @@ describe("JsonTreeView content width", () => {
     for (const row of container.querySelectorAll<HTMLElement>(".json-tree-body .json-tree-line")) {
       expect(row.style.minWidth).toBe("");
     }
+  });
+});
+
+describe("find in document (Ctrl+F)", () => {
+  /**
+   * The reported bug. The tree is virtualized — only ~32 rows of a 500-line
+   * document are ever in the DOM — so a find that reads the DOM reports "not
+   * found" for text that is plainly in the payload. These tests drive the
+   * find bar, not the DOM, and assert on the *count*, which is derived from
+   * the line model.
+   */
+  function bigDocument() {
+    const value: Record<string, string> = {};
+    for (let i = 0; i < 500; i++) value[`key_${i}`] = `value_${i}`;
+    value.needle = "FINDME_UNIQUE";
+    return value;
+  }
+
+  it("opens on Ctrl+F, which previously did nothing at all", async () => {
+    render(<JsonTreeView value={{ a: 1 }} />);
+    expect(screen.queryByLabelText("Find in document")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    expect(await screen.findByLabelText("Find in document")).toBeInTheDocument();
+  });
+
+  it("opens on Cmd+F for macOS", async () => {
+    render(<JsonTreeView value={{ a: 1 }} />);
+
+    fireEvent.keyDown(document, { key: "f", metaKey: true });
+
+    expect(await screen.findByLabelText("Find in document")).toBeInTheDocument();
+  });
+
+  // The regression itself: a match far outside the rendered window.
+  it("finds a string that virtualization keeps out of the DOM", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={bigDocument()} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "FINDME_UNIQUE");
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+  });
+
+  it("counts every match across the whole document, not just the rendered rows", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={bigDocument()} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "value_");
+
+    // 500 leaf values, all outside the ~32-row window except the first few.
+    expect(await screen.findByText("1 of 500")).toBeInTheDocument();
+  });
+
+  it("says so plainly when nothing matches", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: 1 }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "absent");
+
+    expect(await screen.findByText("No results")).toBeInTheDocument();
+  });
+
+  it("steps to the next match on Enter and wraps at the end", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit", b: "hit", c: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    const input = await screen.findByLabelText("Find in document");
+    await user.type(input, "hit");
+    expect(await screen.findByText("1 of 3")).toBeInTheDocument();
+
+    await user.type(input, "{Enter}");
+    expect(await screen.findByText("2 of 3")).toBeInTheDocument();
+
+    await user.type(input, "{Enter}{Enter}");
+    expect(await screen.findByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("steps with the next and previous buttons, for readers who don't reach for Enter", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit", b: "hit", c: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    await user.type(await screen.findByLabelText("Find in document"), "hit");
+    await screen.findByText("1 of 3");
+
+    await user.click(screen.getByLabelText("Next match"));
+    expect(await screen.findByText("2 of 3")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Previous match"));
+    expect(await screen.findByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("disables the step buttons when nothing matches", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "absent");
+    await screen.findByText("No results");
+
+    expect(screen.getByLabelText("Next match")).toBeDisabled();
+    expect(screen.getByLabelText("Previous match")).toBeDisabled();
+  });
+
+  it("closes with the ✕ button as well as Escape", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    await screen.findByLabelText("Find in document");
+
+    await user.click(screen.getByLabelText("Close find"));
+
+    expect(screen.queryByLabelText("Find in document")).not.toBeInTheDocument();
+  });
+
+  it("steps backwards on Shift+Enter", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit", b: "hit", c: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    const input = await screen.findByLabelText("Find in document");
+    await user.type(input, "hit");
+
+    await user.type(input, "{Shift>}{Enter}{/Shift}");
+
+    expect(await screen.findByText("3 of 3")).toBeInTheDocument();
+  });
+
+  it("closes on Escape and forgets the query", async () => {
+    const user = userEvent.setup();
+    render(<JsonTreeView value={{ a: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    const input = await screen.findByLabelText("Find in document");
+    await user.type(input, "hit");
+
+    await user.type(input, "{Escape}");
+
+    expect(screen.queryByLabelText("Find in document")).not.toBeInTheDocument();
+  });
+
+  it("marks the row it is standing on differently from the other matches", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<JsonTreeView value={{ a: "hit", b: "hit" }} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "hit");
+    await screen.findByText("1 of 2");
+
+    expect(container.querySelectorAll(".json-tree-line--match-current")).toHaveLength(1);
+    expect(container.querySelectorAll(".json-tree-line--match")).toHaveLength(1);
+  });
+
+  // An empty bar must not light up every row in the document.
+  it("highlights nothing while the query is still empty", async () => {
+    const { container } = render(<JsonTreeView value={{ a: "hit", b: "hit" }} />);
+
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    await screen.findByLabelText("Find in document");
+
+    expect(container.querySelectorAll(".json-tree-line--match")).toHaveLength(0);
+    expect(container.querySelectorAll(".json-tree-line--match-current")).toHaveLength(0);
   });
 });

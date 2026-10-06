@@ -23,10 +23,10 @@ describe("TopicDetailPanel", () => {
 
   /**
    * Order is asserted, not just membership: Data leads because it is both the
-   * first tab and the default one, Meta Data sits next to it, and Config is
-   * last.
+   * first tab and the default one, Meta Data sits next to it, and the two
+   * read-only tabs (Config, Access) are last.
    */
-  it("renders Data, Meta Data, Partitions, Schema and Config, in that order", () => {
+  it("renders Data, Meta Data, Partitions, Schema, Config, Access and Query, in that order", () => {
     renderWithClient(<TopicDetailPanel connectionId="1" topicName="orders" />);
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
@@ -35,6 +35,12 @@ describe("TopicDetailPanel", () => {
       "Partitions",
       "Schema",
       "Config",
+      // The read-only tabs sit together at the end: Config is the broker's
+      // view of the topic's settings, Access its view of who may touch it,
+      // and Query reads from a different server entirely. None of the three
+      // can change anything from here.
+      "Access",
+      "Query",
     ]);
   });
 

@@ -21,6 +21,10 @@ CONTAINER="${KAFKA_ACL_CONTAINER:-kafka-acl}"
 HOST_PORT="${KAFKA_ACL_PORT:-9192}"
 IMAGE="${KAFKA_ACL_IMAGE:-apache/kafka:3.9.0}"
 TOPIC="${KAFKA_ACL_TOPIC:-e2e-acl-publish}"
+# The prefix the PREFIXED ACL below is granted on. Nothing needs to exist with
+# this name: a prefixed binding governs topics that do not exist yet, which is
+# exactly the property the UI surfaces.
+PREFIX="${KAFKA_ACL_PREFIX:-e2e-acl-prefixed-}"
 CONFIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../build-support/e2e-acl" && pwd)"
 K=/opt/kafka/bin
 # The same address inside the container as outside — see the listener comments
@@ -45,13 +49,24 @@ sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule require
 PROPS
 
 echo "==> waiting for the broker"
+# Fails loudly rather than falling through — see the matching note in
+# scripts/e2e-fixtures.sh. This broker is slower to start than the plain one
+# (SASL plus the authorizer), which is why it waits longer.
+broker_ready=0
 for _ in $(seq 1 90); do
   if docker exec "$CONTAINER" "$K/kafka-topics.sh" --bootstrap-server "$INTERNAL" \
        --command-config /tmp/admin.properties --list >/dev/null 2>&1; then
+    broker_ready=1
     break
   fi
   sleep 1
 done
+if [ "$broker_ready" -ne 1 ]; then
+  echo "the broker at $INTERNAL did not answer within 90s" >&2
+  echo "--- last 50 lines of \`docker logs $CONTAINER\` ---" >&2
+  docker logs --tail 50 "$CONTAINER" >&2 || echo "(container $CONTAINER does not exist)" >&2
+  exit 1
+fi
 
 echo "==> topic $TOPIC"
 docker exec "$CONTAINER" "$K/kafka-topics.sh" --bootstrap-server "$INTERNAL" \
@@ -74,6 +89,16 @@ acl --allow-principal User:writer --operation Read --group '*'
 echo "==> ACLs for User:reader (Describe, Read on $TOPIC — deliberately no Write)"
 acl --allow-principal User:reader --operation Describe --operation Read --topic "$TOPIC"
 acl --allow-principal User:reader --operation Read --group '*'
+
+# A PREFIXED grant, so `backend/kafka/tests/acl_describe.rs` can show that a
+# DescribeAcls filter in MATCH mode resolves a prefix against a concrete topic
+# name. The app relies on the broker to do that resolution rather than matching
+# patterns itself, so it needs a prefixed ACL to resolve. `--resource-pattern-type
+# prefixed` is what makes this a prefix rather than a literal topic called
+# "e2e-acl-prefixed-".
+echo "==> PREFIXED ACL for User:writer (Write on $PREFIX*)"
+acl --allow-principal User:writer --operation Write \
+  --topic "$PREFIX" --resource-pattern-type prefixed
 
 echo "==> current ACLs"
 docker exec "$CONTAINER" "$K/kafka-acls.sh" --bootstrap-server "$INTERNAL" \

@@ -10,6 +10,20 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Declared on the job, not on the scan step, and that placement is the
+    # whole point. A step's own `env:` block is not in scope for that same
+    # step's `if:` — the runner evaluates the condition to decide whether to
+    # run the step at all, before it builds the step's environment. So
+    # `if: env.SONAR_TOKEN != ''` sitting next to `env: SONAR_TOKEN: ...`
+    # always read an undefined value and was always false: the scan never
+    # ran, on any branch, including main.
+    #
+    # The indirection through `env` exists because the `secrets` context is
+    # not available to a step-level `if` at all. Job-level `env` is, which is
+    # what makes this work.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
     steps:
       - name: Checkout
         # Sonar needs the full history to attribute issues to the commit that
@@ -87,13 +101,12 @@ jobs:
           path: coverage/
 
       # Skipped rather than failed when the token is not configured, so forks
-      # and PRs from them still get the coverage run above.
+      # and PRs from them still get the coverage run above. The token comes
+      # from the job-level `env` above — see the note there for why it cannot
+      # be declared on this step.
       - name: SonarQube scan
         if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@v4
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
       - name: Stop Kafka
         if: always()

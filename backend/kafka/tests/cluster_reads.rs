@@ -66,6 +66,8 @@ fn connection(bootstrap_servers: String) -> Connection {
         sasl_password: None,
         sasl_oauth_url: None,
         schema_registry_endpoint: None,
+        ksqldb_endpoint: None,
+        ksqldb_basic_auth_credentials: None,
         schema_registry_basic_auth_credentials: None,
         schema_registry_trust_store_location: None,
         schema_registry_trust_store_password: None,

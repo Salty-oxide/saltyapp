@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
   AllCommunityModule,
@@ -40,11 +40,9 @@ import {
 import {
   base64ToDisplayText,
   decodeValuePreview,
-  searchSeesPartialValue,
   base64DecodedLength,
   MAX_INLINE_PAYLOAD_BYTES,
   retainedPayloadBytes,
-  VALUE_PREVIEW_BYTES,
 } from "./payloadDecoding";
 import { api } from "../../lib/tauri";
 import { formatLocalTimestamp, localTimeZoneLabel } from "../../lib/time";
@@ -66,10 +64,9 @@ function formatTimestamp(params: ValueFormatterParams<TopicMessage, number | nul
 
 /**
  * Previews are cached per message object rather than recomputed: AG Grid
- * calls a `valueGetter` again on every sort, filter, quick-filter keystroke
- * and re-render, and `matchesSearch` below asks for the same text again.
- * Keyed weakly, so a row's preview is released with the row itself when a
- * new fetch replaces the tab's messages.
+ * calls a `valueGetter` again on every sort, filter and re-render. Keyed
+ * weakly, so a row's preview is released with the row itself when a new
+ * fetch replaces the tab's messages.
  */
 const TIMESTAMP_HEADER = (() => {
   const zone = localTimeZoneLabel();
@@ -94,10 +91,10 @@ const valuePreviewCache = new WeakMap<TopicMessage, string>();
  * fetch has run. The full payload is decoded only when a row is opened in
  * `MessagePayloadViewer`.
  *
- * This scopes the search box to each message's first few KB. Searching whole
- * payloads would mean decoding and scanning every loaded message on every
- * keystroke (~244ms per keystroke over 300 x 2 MB messages), which is a
- * worse trade than a bounded search.
+ * Bounded rather than whole-payload: decoding every loaded message in full
+ * to fill a grid cell costs ~244ms over 300 x 2 MB messages, and the column
+ * only ever shows a cell's worth of it. A row's full value is one click away
+ * in the payload viewer.
  */
 function messageValueText(message: TopicMessage | undefined): string {
   if (!message) return "";
@@ -131,19 +128,9 @@ function formatKey(params: ValueGetterParams<TopicMessage>): string {
  */
 const STREAM_FLUSH_MS = 100;
 
-/** Keeps the search bar's quick filter scoped to key + value by opting these columns out of it. */
-const excludeFromQuickFilter = () => "";
-
-/** Mirrors AG Grid's own quick-filter matching (case-insensitive substring over the Key/Value columns' text, the only two that don't opt out via `excludeFromQuickFilter`) so the "N / total" count above the grid reflects exactly what's visible, without reaching into the grid's internal API. */
-function matchesSearch(message: TopicMessage, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  return messageKeyText(message).toLowerCase().includes(q) || messageValueText(message).toLowerCase().includes(q);
-}
-
 const COLUMN_DEFS: ColDef<TopicMessage>[] = [
-  { field: "partition", headerName: "Partition", width: 100, getQuickFilterText: excludeFromQuickFilter },
-  { field: "offset", headerName: "Offset", width: 100, getQuickFilterText: excludeFromQuickFilter },
+  { field: "partition", headerName: "Partition", width: 100 },
+  { field: "offset", headerName: "Offset", width: 100 },
   {
     field: "timestampMs",
     // The zone is named once in the header instead of on every row — see
@@ -154,7 +141,6 @@ const COLUMN_DEFS: ColDef<TopicMessage>[] = [
     headerName: TIMESTAMP_HEADER,
     valueFormatter: formatTimestamp,
     width: 200,
-    getQuickFilterText: excludeFromQuickFilter,
   },
   { headerName: "Key", valueGetter: formatKey, width: 150 },
   { headerName: "Value", valueGetter: formatValue, cellRenderer: ValueCell, flex: 1 },
@@ -251,29 +237,19 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   const defaultForm = partitionId === undefined ? emptyFilterForm() : { ...emptyFilterForm(), partitions: String(partitionId) };
   const form = useDataTabFiltersStore((s) => s.formByTab[tabKey]) ?? defaultForm;
   const setStoredForm = useDataTabFiltersStore((s) => s.setForm);
-  // How the grid is arranged (sort, column filters, the search box) is kept
-  // under the same key, for the same reason and one more: the middle pane is
-  // rendered `key={activeTabId}` in App.tsx, so every top-level tab switch
-  // destroys the grid. Held in AG Grid (or in `useState`, as the search box
-  // was), a sort and a filter were gone by the time the user came back.
+  // How the grid is arranged (sort, column filters) is kept under the same
+  // key, for the same reason and one more: the middle pane is rendered
+  // `key={activeTabId}` in App.tsx, so every top-level tab switch destroys
+  // the grid. Held in AG Grid, a sort and a filter were gone by the time the
+  // user came back.
   const gridState = useDataTabGridStateStore((s) => s.stateByTab[tabKey]) ?? EMPTY_DATA_TAB_GRID_STATE;
   const patchGridState = useDataTabGridStateStore((s) => s.patchState);
-  const searchText = gridState.searchText;
   const gridApiRef = useRef<GridApi<TopicMessage> | null>(null);
   /** Set while `applyGridState` is pushing a saved arrangement into the grid, so the sort/filter events that causes aren't written straight back to the store as if the user had made them. */
   const isRestoringGridStateRef = useRef(false);
   const tabKeyRef = useRef(tabKey);
   tabKeyRef.current = tabKey;
   const messages = useTabDataStore((s) => s.messagesByTab[tabKey] ?? EMPTY_TAB_MESSAGES);
-  const visibleMessageCount = useMemo(
-    () => (searchText ? messages.filter((m) => matchesSearch(m, searchText)).length : messages.length),
-    [messages, searchText],
-  );
-  // Only worth telling the user the search is bounded when some loaded row
-  // actually has value text the search can't reach — which needs the row to
-  // carry a payload at all, not merely to report a large size. See
-  // `searchSeesPartialValue`.
-  const hasPartiallySearchedValues = useMemo(() => messages.some(searchSeesPartialValue), [messages]);
   /** Set when the last Fetch stopped on the byte budget rather than on the filter — see `MessageFetchResult.stoppedAtByteBudget`. Local rather than cached per tab: it describes the fetch that just ran, and a re-fetch always re-decides it. */
   const [byteBudgetBytesRead, setByteBudgetBytesRead] = useState<number | null>(null);
   const setTabMessages = useTabDataStore((s) => s.setTabMessages);
@@ -422,12 +398,12 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   // partitions, or connections within the same top-level tab — neither
   // App.tsx's <TopicDetailPanel>/<PartitionDetailPanel> nor this component
   // are keyed by topic/partition, only by the top-level tab. The fetch
-  // filter form and the grid's arrangement (sort, column filters, the
-  // "Search messages" box) are both keyed per-topic above, so they don't
-  // need resetting here: a different topic is a different key and therefore
-  // starts blank — which is what stops a leftover search from a previous
-  // topic silently hiding a new one's rows — while coming back to a topic
-  // you'd already arranged restores it exactly as you left it.
+  // filter form and the grid's arrangement (sort, column filters) are both
+  // keyed per-topic above, so they don't need resetting here: a different
+  // topic is a different key and therefore starts blank — which is what
+  // stops a leftover column filter from a previous topic silently hiding a
+  // new one's rows — while coming back to a topic you'd already arranged
+  // restores it exactly as you left it.
   //
   // A stale error from a previous fetch has no such key, so it still needs
   // clearing explicitly.
@@ -495,9 +471,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   }
 
   function handleFilterChanged(event: FilterChangedEvent<TopicMessage>) {
-    // Also fires for the quick filter, which `getFilterModel` doesn't cover
-    // and which is already stored as `searchText` — saving the (unchanged)
-    // column filter model alongside it is harmless.
     if (isRestoringGridStateRef.current) return;
     patchGridState(tabKeyRef.current, { filterModel: event.api.getFilterModel() });
   }
@@ -830,21 +803,12 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
         </p>
       )}
 
-      <label className="data-tab-search">
-        Search messages
-        <input
-          value={searchText}
-          onChange={(e) => patchGridState(tabKey, { searchText: e.target.value })}
-          placeholder="Search by key or value"
-        />
-      </label>
-
       {byteBudgetBytesRead !== null && (
         // A count cap can't express this: on a topic of multi-megabyte
         // records the fetch stops on size long before it stops on the
         // message counts in the form, and without saying so a short result
         // reads as "that's all there is".
-        <p role="status" className="data-tab-search-notice data-tab-search-notice--warning">
+        <p role="status" className="data-tab-notice data-tab-notice--warning">
           Stopped after reading {Math.round(byteBudgetBytesRead / (1024 * 1024)).toLocaleString()} MB of messages.
           Narrow the filter, or raise Max total fetch size in Settings → General, to load more.
         </p>
@@ -854,7 +818,7 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
         // Rows vanishing with no explanation is worse than the memory
         // pressure that caused it: the filters and sort are still here, so an
         // empty grid reads as a broken fetch rather than a deliberate one.
-        <p role="status" className="data-tab-search-notice">
+        <p role="status" className="data-tab-notice">
           These messages were cleared while you were working elsewhere, to keep the app within Max total fetch size.
           Your filters are unchanged — Fetch again to reload them.
         </p>
@@ -863,23 +827,9 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
       {payloadBudgetSpent && (
         // Only reachable when this view alone is over the ceiling: everything
         // else has already been evicted and there is nothing left to free.
-        <p role="status" className="data-tab-search-notice data-tab-search-notice--warning">
+        <p role="status" className="data-tab-notice data-tab-notice--warning">
           This view alone is holding {Math.round(payloadBytesHeld / (1024 * 1024)).toLocaleString()} MB of message
           payloads — the whole Max total fetch size. Narrow the filter, or raise the limit in Settings → General.
-        </p>
-      )}
-
-      {hasPartiallySearchedValues && (
-        // Scoped to the search box, which is the only thing this bound
-        // affects. It used to end "open a message to view its full payload",
-        // implying the row held only part of the message — but a fetch
-        // carries up to 256 KB per row (`inlinePayloadBytesFor`), so for most
-        // messages past this 4 KB mark the whole payload is already there and
-        // opening one shows it without going anywhere.
-        <p className="data-tab-search-notice">
-          Some loaded messages are larger than {VALUE_PREVIEW_BYTES / 1024} KB. Search matches only the first{" "}
-          {VALUE_PREVIEW_BYTES / 1024} KB of each message value, so it can miss text further in; open a message to
-          read its whole value.
         </p>
       )}
 
@@ -891,7 +841,7 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
           gap is what tells you more are there. Separators because a bare
           600000 is hard to size at a glance.
         */}
-        {visibleMessageCount.toLocaleString()} loaded of {(totalMatching ?? messages.length).toLocaleString()} matching
+        {messages.length.toLocaleString()} loaded of {(totalMatching ?? messages.length).toLocaleString()} matching
         {/*
           Omitted entirely rather than shown as 0 ms while a fetch is still
           running or after one was stopped: the number is how long the fetch
@@ -907,7 +857,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
           rowData={messages}
           columnDefs={COLUMN_DEFS}
           defaultColDef={DEFAULT_COL_DEF}
-          quickFilterText={searchText}
           context={gridContext}
           getRowId={getRowId}
           rowSelection={ROW_SELECTION}

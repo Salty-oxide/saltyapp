@@ -43,7 +43,6 @@ export const KAFKA_VERSIONS = [
   "2.6",
   "2.7",
   "2.8",
-  "2.9",
   "3.0",
   "3.1",
   "3.2",
@@ -52,7 +51,53 @@ export const KAFKA_VERSIONS = [
   "3.5",
   "3.6",
   "3.7",
+  "3.8",
+  "3.9",
+  "4.0",
+  "4.1",
+  "4.2",
+  "4.3",
 ] as const;
+
+/**
+ * Whether this version's clusters can only be KRaft — Kafka 4.0 removed
+ * ZooKeeper outright, so the modal's ZooKeeper section is meaningless from
+ * there on, and a 4.x connection must not persist ZooKeeper settings.
+ *
+ * Note what this is *not* used for: `kafkaVersion` drives no librdkafka
+ * property anywhere in the app (see `backend/kafka/src/config.rs`, which
+ * never reads it). It is stored metadata, and this predicate is the one
+ * place it changes behaviour.
+ *
+ * An unparseable or unlisted version returns `false` on purpose. "Unknown"
+ * has to mean "hide nothing" — a row written by an older build, or a
+ * version this build does not offer, must not lose its ZooKeeper settings
+ * because the string could not be read.
+ */
+export function isKRaftOnly(version: string): boolean {
+  const major = Number.parseInt(version, 10);
+  return Number.isFinite(major) && major >= 4;
+}
+
+/** `MetadataMode` in `salty_core::cluster_mode`, as camelCase JSON. */
+export type MetadataMode = "kraft" | "zookeeper" | "unknown";
+
+/**
+ * What the Properties tab's Detect button learned from the cluster.
+ *
+ * Every field is nullable because this comes from a broker's answer to
+ * `DescribeConfigs`, and a principal who may not read broker configs gets
+ * an empty *successful* result rather than a refusal — so "could not tell"
+ * arrives as a `mode` of `"unknown"` plus a `note`, not as a rejection.
+ */
+export interface ClusterVersionReport {
+  mode: MetadataMode;
+  processRoles: string | null;
+  interBrokerProtocolVersion: string | null;
+  /** The dropdown value to apply — a suggestion, which the user can override. */
+  suggestedVersion: string | null;
+  note: string | null;
+}
 
 export type SchemaFormat = "avro" | "protobuf";
 
@@ -72,6 +117,10 @@ export interface Connection {
   saslOauthUrl: string | null;
   schemaRegistryEndpoint: string | null;
   schemaRegistryBasicAuthCredentials: string | null;
+  /** Base URL of this cluster's ksqlDB server. Absent for the many clusters that run none. */
+  ksqldbEndpoint: string | null;
+  /** `user:password`, the same shape the schema registry's credentials use. */
+  ksqldbBasicAuthCredentials: string | null;
   schemaRegistryTrustStoreLocation: string | null;
   schemaRegistryTrustStorePassword: string | null;
   schemaRegistryKeystoreLocation: string | null;
@@ -111,6 +160,10 @@ export interface NewConnection {
   saslOauthUrl: string | null;
   schemaRegistryEndpoint: string | null;
   schemaRegistryBasicAuthCredentials: string | null;
+  /** Base URL of this cluster's ksqlDB server. Absent for the many clusters that run none. */
+  ksqldbEndpoint: string | null;
+  /** `user:password`, the same shape the schema registry's credentials use. */
+  ksqldbBasicAuthCredentials: string | null;
   schemaRegistryTrustStoreLocation: string | null;
   schemaRegistryTrustStorePassword: string | null;
   schemaRegistryKeystoreLocation: string | null;
@@ -189,8 +242,8 @@ export interface MessageFilter {
    * payload.
    *
    * The Data tab's grid fetch always sets this to `VALUE_PREVIEW_BYTES` — it
-   * renders one line per row and searches only that much of a value, so
-   * shipping whole payloads for it cost ~4 GB of base64 on a 1,000-row fetch
+   * renders one line per row, so shipping whole payloads for it cost ~4 GB
+   * of base64 on a 1,000-row fetch
    * of 3 MB records (once streamed, once in the result) to display a few
    * hundred KB of text, and the webview died holding it. Only the
    * single-message fetch behind the payload viewer passes `null`.
@@ -320,6 +373,135 @@ export interface ImportSummary {
   skipped: number;
 }
 
+/** What kind of resource an ACL binding governs. Mirrors `salty_core::ResourceType`. */
+export type AclResourceType = "unknown" | "any" | "topic" | "group" | "broker" | "transactionalId";
+
+/**
+ * How a binding's resource name is matched.
+ *
+ * The attribute the UI makes most prominent: `prefixed` is what makes a grant
+ * cover resources that do not exist yet.
+ */
+export type AclPatternType = "unknown" | "any" | "match" | "literal" | "prefixed";
+
+export type AclOperation =
+  | "unknown"
+  | "any"
+  | "all"
+  | "read"
+  | "write"
+  | "create"
+  | "delete"
+  | "alter"
+  | "describe"
+  | "clusterAction"
+  | "describeConfigs"
+  | "alterConfigs"
+  | "idempotentWrite";
+
+export type AclPermission = "unknown" | "any" | "deny" | "allow";
+
+/** One ACL binding exactly as the broker reported it. */
+export interface AclBinding {
+  resourceType: AclResourceType;
+  /** Read together with `patternType` — the same string means different things under `literal` and `prefixed`. */
+  resourceName: string;
+  patternType: AclPatternType;
+  /** Kafka's principal string, conventionally `User:alice`. `User:*` is the any-principal wildcard. */
+  principal: string;
+  host: string;
+  operation: AclOperation;
+  permission: AclPermission;
+}
+
+/**
+ * What the ACL listing was actually able to tell us.
+ *
+ * An empty list is dangerously ambiguous, so the meaning travels with it:
+ *
+ * - `noAuthorizer` — the broker runs no authorizer, so ACLs are not consulted
+ *   and every principal may do anything. Empty here means *unrestricted*.
+ * - `available` — the broker answered with bindings.
+ * - `indeterminate` — nothing came back and the client cannot tell whether
+ *   no ACLs are defined or this principal may not read them. librdkafka
+ *   discards the broker's error code for DescribeAcls, so this genuinely
+ *   cannot be resolved; see the backend's `AclAvailability`.
+ */
+export type AclAvailability = "noAuthorizer" | "available" | "indeterminate";
+
+export interface AclListing {
+  availability: AclAvailability;
+  bindings: AclBinding[];
+  /** Bindings the broker returned carrying an error of their own — reported rather than allowed to fail the listing. */
+  bindingErrors: string[];
+}
+
+/**
+ * Why a verdict came out the way it did.
+ *
+ * Carried so the UI can label a tick as *implied* rather than presenting it
+ * as a grant somebody wrote — a reader who cannot tell the difference cannot
+ * tell which ACL to change.
+ */
+export type AclVerdictReason =
+  | { kind: "explicitDeny" }
+  | { kind: "directAllow" }
+  | { kind: "impliedAllow"; via: AclOperation }
+  | { kind: "defaultDeny" };
+
+export interface AclOperationVerdict {
+  operation: AclOperation;
+  allowed: boolean;
+  reason: AclVerdictReason;
+  /** The deciding binding was written against `User:*`, so revoking it affects everyone. */
+  viaWildcardPrincipal: boolean;
+}
+
+export interface AclPrincipalAccess {
+  principal: string;
+  verdicts: AclOperationVerdict[];
+}
+
+/**
+ * Everything the Access tab needs about one resource.
+ *
+ * `access` is computed in Rust (`salty_core::resource_access`), not here:
+ * Kafka's deny-precedence and implication rules have exactly one
+ * implementation, the one with unit tests around it.
+ */
+export interface AclResourceAccess {
+  listing: AclListing;
+  access: AclPrincipalAccess[];
+}
+
+/** A column in a ksqlDB result, as the server described it. */
+export interface KsqlColumn {
+  name: string;
+  /** ksqlDB's own type name — `STRING`, `BIGINT`, … Carried through so a numeric column can get a numeric filter. */
+  kind: string;
+}
+
+/** One result row: the JSON values in column order. */
+export type KsqlRow = unknown[];
+
+/** The columns a query returned, delivered before any row. */
+export interface KsqlHeaderEvent {
+  requestId: string;
+  columns: KsqlColumn[];
+}
+
+/** A batch of result rows. */
+export interface KsqlRowsEvent {
+  requestId: string;
+  rows: KsqlRow[];
+}
+
+export interface KsqlQueryOutcome {
+  /** True when Stop ended it rather than the server closing the stream. */
+  cancelled: boolean;
+  rowCount: number;
+}
+
 export const api = {
   listConnections: () => invoke<Connection[]>("connection_list"),
   createConnection: (newConnection: NewConnection) =>
@@ -343,6 +525,12 @@ export const api = {
     }),
   testConnection: (newConnection: NewConnection) =>
     invoke<ConnectionStatus>("connection_test", { newConnection }),
+  detectClusterVersion: (newConnection: NewConnection) =>
+    invoke<ClusterVersionReport>("connection_detect_version", {
+      newConnection,
+      // A broker read, like listBrokers/listTopics — not the ZooKeeper ping's timeout.
+      timeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
   connectConnection: (id: string) => invoke<ConnectionStatus>("connection_connect", { id }),
   disconnectConnection: (id: string) => invoke<void>("connection_disconnect", { id }),
   isConnectionConnected: (id: string) => invoke<boolean>("connection_is_connected", { id }),
@@ -409,6 +597,46 @@ export const api = {
     invoke<ConfigEntry[]>("connection_describe_topic_config", {
       id,
       topic,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /**
+   * Runs a ksqlDB statement that returns one response — SHOW, DESCRIBE,
+   * EXPLAIN, CREATE STREAM. Streaming queries go through `ksqlQuery`.
+   */
+  ksqlStatement: (id: string, sql: string) =>
+    invoke<{ body: string }>("ksql_statement", { id, sql }),
+  /** The stream registered over a topic, if any — ksqlDB cannot SELECT from a raw topic. */
+  ksqlStreamForTopic: (id: string, topic: string) =>
+    invoke<string | null>("ksql_stream_for_topic", { id, topic }),
+  /**
+   * Runs a push query. Rows arrive as `"ksql-rows"` events tagged with
+   * `requestId`, preceded by one `"ksql-header"` naming the columns — the
+   * header cannot wait for this promise, because a live tail never resolves
+   * until it is stopped.
+   */
+  ksqlQuery: (id: string, sql: string, requestId: string) =>
+    invoke<KsqlQueryOutcome>("ksql_query", { id, sql, requestId }),
+  /** Stops a running query. The Stop button. */
+  ksqlCancel: (requestId: string) => invoke<void>("ksql_cancel", { requestId }),
+  /** Every ACL the broker will show this principal — backs the tree's Access Control category. */
+  listAcls: (id: string) =>
+    invoke<AclListing>("acl_list", {
+      id,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /**
+   * Every ACL that *governs* one named resource — backs the Access tabs.
+   *
+   * A separate broker call rather than a client-side filter of `listAcls`:
+   * the backend sends this in MATCH mode so the broker resolves which
+   * literal, prefixed and wildcard patterns apply. Matching patterns here
+   * would mean reimplementing the authorizer.
+   */
+  aclsForResource: (id: string, resourceType: AclResourceType, resourceName: string) =>
+    invoke<AclResourceAccess>("acl_for_resource", {
+      id,
+      resourceType,
+      resourceName,
       readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
     }),
   fetchConsumerGroupLag: (id: string, groupId: string) =>

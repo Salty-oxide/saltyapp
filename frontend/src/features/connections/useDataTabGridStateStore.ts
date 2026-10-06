@@ -4,16 +4,14 @@ import { dataTabKeyBelongsTo } from "../workspace/useTabDataStore";
 
 /**
  * The parts of a Data tab's grid that are the user's own arrangement of the
- * rows rather than the rows themselves: how they're sorted, which column
- * filters are set, and what's typed in the "Search messages" box.
+ * rows rather than the rows themselves: how they're sorted and which column
+ * filters are set.
  */
 export interface DataTabGridState {
   /** AG Grid's sort model — column id + direction, in sort priority order. */
   sortModel: SortModelItem[];
   /** AG Grid's column filter model, keyed by column id. */
   filterModel: FilterModel;
-  /** The "Search messages" box, applied to the grid as its quick filter. */
-  searchText: string;
 }
 
 /**
@@ -25,11 +23,10 @@ export interface DataTabGridState {
 export const EMPTY_DATA_TAB_GRID_STATE: DataTabGridState = {
   sortModel: [],
   filterModel: {},
-  searchText: "",
 };
 
 /**
- * Per-Data-tab sort/filter/search, keyed by `dataTabCacheKey` — the same key
+ * Per-Data-tab sort/filter, keyed by `dataTabCacheKey` — the same key
  * as the cached rows (`useTabDataStore`) and the fetch form
  * (`useDataTabFiltersStore`), so a tab's arrangement travels with the rows
  * it arranges.
@@ -43,13 +40,13 @@ export const EMPTY_DATA_TAB_GRID_STATE: DataTabGridState = {
  * Keying by topic/partition as well as by tab is also what keeps the old
  * reset-on-topic-switch behaviour: a different topic is a different key, so
  * it starts unsorted and unfiltered rather than inheriting an arrangement
- * (and especially a search box) from the topic before it.
+ * from the topic before it.
  */
 interface DataTabGridStateStore {
   stateByTab: Record<string, DataTabGridState>;
   /** Merges a patch into one tab's state, leaving the parts it doesn't mention alone. */
   patchState: (key: string, patch: Partial<DataTabGridState>) => void;
-  /** Forgets every sort/filter/search belonging to one connection, in every tab — see `useTabDataStore`'s `clearForConnection`. */
+  /** Forgets every sort/filter belonging to one connection, in every tab — see `useTabDataStore`'s `clearForConnection`. */
   clearForConnection: (connectionId: string) => void;
 }
 

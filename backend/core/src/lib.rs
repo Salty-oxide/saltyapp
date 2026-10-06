@@ -1,5 +1,8 @@
+mod acl;
+mod acl_effective;
 mod auth;
 mod cluster;
+mod cluster_mode;
 mod connection;
 mod connection_export;
 mod data_migration;
@@ -10,9 +13,21 @@ mod message_stream;
 mod publish;
 mod registry;
 
+pub use acl::{
+    AclAvailability, AclBinding, AclFilter, AclListing, AclOperation, AclPermission, PatternType,
+    ResourceType,
+};
+pub use acl_effective::{
+    effective, principals, resource_access, OperationVerdict, PrincipalAccess, ResourceAccess,
+    Verdict, VerdictReason, WILDCARD_PRINCIPAL,
+};
 pub use cluster::{
     BrokerSummary, ConfigEntry, ConsumerGroupLag, ConsumerGroupSummary, PartitionLag,
     PartitionSummary, TopicSummary,
+};
+pub use cluster_mode::{
+    cluster_version_report, ClusterVersionReport, MetadataMode, INTER_BROKER_PROTOCOL_VERSION_CONFIG,
+    PROCESS_ROLES_CONFIG,
 };
 pub use message::{MessageFetchResult, MessageFilter, MessageHeader, MessagesBatchEvent, TopicMessage};
 pub use message_stream::forward_in_batches;

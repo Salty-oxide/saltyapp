@@ -1,6 +1,23 @@
 import { useState } from "react";
 import { PartitionLag } from "../../lib/tauri";
+import { AclAccessTab } from "./AclAccessTab";
 import { useFetchConsumerGroupLag } from "./useClusterResources";
+
+type GroupTabId = "lag" | "access";
+
+/**
+ * Lag first and by default — it is what the panel has always shown and the
+ * reason people open a group. Access is second for the same reason Config and
+ * Access sit last on the topic panel: it is the broker's own read-only view.
+ *
+ * Group ACLs are worth surfacing here specifically because a principal with
+ * topic `Read` but no group `Read` fails in a way that looks like a broker
+ * problem rather than a permission one.
+ */
+const GROUP_TABS: { id: GroupTabId; label: string }[] = [
+  { id: "lag", label: "Lag" },
+  { id: "access", label: "Access" },
+];
 
 export interface ConsumerGroupDetailPanelProps {
   connectionId: string;
@@ -26,6 +43,7 @@ function formatOwner(row: PartitionLag): string {
 }
 
 export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGroupDetailPanelProps) {
+  const [activeTab, setActiveTab] = useState<GroupTabId>("lag");
   const [searchText, setSearchText] = useState("");
   const fetchLag = useFetchConsumerGroupLag();
   const data = fetchLag.data;
@@ -44,6 +62,27 @@ export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGrou
         </h2>
       </header>
 
+      <div className="connection-modal-tabs" role="tablist">
+        {GROUP_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`connection-modal-tab${activeTab === tab.id ? " connection-modal-tab--active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "access" && (
+        <AclAccessTab connectionId={connectionId} resourceType="group" resourceName={groupId} />
+      )}
+
+      {activeTab === "lag" && (
+        <>
       <div className="lag-panel-summary">
         <span>{totalLag !== null ? `Total lag: ${totalLag.toLocaleString()} messages` : ""}</span>
         <button
@@ -65,7 +104,7 @@ export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGrou
 
       {data && data.partitions.length > 0 && (
         <>
-          <label className="data-tab-search">
+          <label className="panel-search">
             Search topics
             <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search…" />
           </label>
@@ -94,6 +133,8 @@ export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGrou
               ))}
             </tbody>
           </table>
+        </>
+      )}
         </>
       )}
     </div>

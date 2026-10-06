@@ -1,4 +1,3 @@
-use crate::TopicMessage;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,8 +22,14 @@ use tokio::sync::mpsc::UnboundedReceiver;
 ///   `progress_every` messages — the Logs panel's "Fetched N so far" line.
 /// * The returned count is how many messages were handed to `emit`, which the
 ///   caller uses to work out which messages the stream did *not* deliver.
-pub async fn forward_in_batches<E, P>(
-    mut messages: UnboundedReceiver<TopicMessage>,
+///
+/// Generic over the item because the batching has nothing to do with what is
+/// being batched: it was written for fetched messages and is now also what
+/// carries ksqlDB result rows to the same grid. Nothing in the body ever
+/// looked at a field, so this is the same function with a wider signature —
+/// the existing message tests exercise it unchanged.
+pub async fn forward_in_batches<T, E, P>(
+    mut messages: UnboundedReceiver<T>,
     cancelled: Arc<AtomicBool>,
     batch_size: usize,
     batch_interval: Duration,
@@ -33,14 +38,14 @@ pub async fn forward_in_batches<E, P>(
     mut progress: P,
 ) -> usize
 where
-    E: FnMut(Vec<TopicMessage>),
+    E: FnMut(Vec<T>),
     P: FnMut(usize),
 {
     // A batch size of zero would mean a batch is never full, so nothing would
     // ever be sent except on the interval — treat it as "send each message".
     let batch_size = batch_size.max(1);
     let mut emitted = 0usize;
-    let mut batch: Vec<TopicMessage> = Vec::with_capacity(batch_size);
+    let mut batch: Vec<T> = Vec::with_capacity(batch_size);
     let mut reported_at = 0usize;
 
     loop {
@@ -101,6 +106,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TopicMessage;
     use std::sync::Mutex;
     use tokio::sync::mpsc::unbounded_channel;
 

@@ -28,6 +28,9 @@ pub struct PortableConnection {
     pub sasl_username: Option<String>,
     pub sasl_oauth_url: Option<String>,
     pub schema_registry_endpoint: Option<String>,
+    /// Carried: an endpoint is an address, not a credential. Its basic-auth
+    /// credential is deliberately absent, like every other secret here.
+    pub ksqldb_endpoint: Option<String>,
     pub schema_registry_trust_store_location: Option<String>,
     pub schema_registry_keystore_location: Option<String>,
     pub ssl_truststore_location: Option<String>,
@@ -49,6 +52,7 @@ impl From<&Connection> for PortableConnection {
             sasl_username: connection.sasl_username.clone(),
             sasl_oauth_url: connection.sasl_oauth_url.clone(),
             schema_registry_endpoint: connection.schema_registry_endpoint.clone(),
+            ksqldb_endpoint: connection.ksqldb_endpoint.clone(),
             schema_registry_trust_store_location: connection.schema_registry_trust_store_location.clone(),
             schema_registry_keystore_location: connection.schema_registry_keystore_location.clone(),
             ssl_truststore_location: connection.ssl_truststore_location.clone(),
@@ -74,6 +78,10 @@ impl From<PortableConnection> for NewConnection {
             sasl_oauth_url: portable.sasl_oauth_url,
             schema_registry_endpoint: portable.schema_registry_endpoint,
             schema_registry_basic_auth_credentials: None,
+            ksqldb_endpoint: portable.ksqldb_endpoint,
+            // A secret, so it is not in the file and cannot be restored from
+            // one. The importer re-enters it on their own machine.
+            ksqldb_basic_auth_credentials: None,
             schema_registry_trust_store_location: portable.schema_registry_trust_store_location,
             schema_registry_trust_store_password: None,
             schema_registry_keystore_location: portable.schema_registry_keystore_location,
@@ -197,6 +205,8 @@ mod tests {
             sasl_oauth_url: Some("https://oauth.example.com".into()),
             schema_registry_endpoint: Some("https://schema.example.com".into()),
             schema_registry_basic_auth_credentials: Some("sr-user:sr-secret".into()),
+            ksqldb_endpoint: Some("https://ksql.example.com".into()),
+            ksqldb_basic_auth_credentials: Some("ksql-user:ksql-secret".into()),
             schema_registry_trust_store_location: Some("/certs/truststore.jks".into()),
             schema_registry_trust_store_password: Some("sr-ts-secret".into()),
             schema_registry_keystore_location: Some("/certs/keystore.jks".into()),
@@ -272,6 +282,37 @@ mod tests {
         );
     }
 
+    // An endpoint is an address, not a credential, so it is carried — while
+    // the credential beside it is not. Asserted as a pair because the value of
+    // each only makes sense against the other.
+    #[test]
+    fn portable_connection_carries_the_ksqldb_address_but_not_its_credential() {
+        let portable = PortableConnection::from(&sample_connection("1", "Prod"));
+
+        assert_eq!(
+            portable.ksqldb_endpoint.as_deref(),
+            Some("https://ksql.example.com")
+        );
+        let json = serde_json::to_string(&portable).unwrap();
+        assert!(!json.contains("ksql-user"));
+        assert!(!json.contains("ksql-secret"));
+    }
+
+    // An imported connection arrives able to query but not to authenticate,
+    // which is the same shape every other credential here takes.
+    #[test]
+    fn an_imported_connection_keeps_the_ksqldb_address_and_drops_the_credential() {
+        let portable = PortableConnection::from(&sample_connection("1", "Prod"));
+
+        let imported: crate::connection::NewConnection = portable.into();
+
+        assert_eq!(
+            imported.ksqldb_endpoint.as_deref(),
+            Some("https://ksql.example.com")
+        );
+        assert!(imported.ksqldb_basic_auth_credentials.is_none());
+    }
+
     #[test]
     fn portable_connection_never_carries_any_secret_from_a_connection() {
         // Regression guard: `Connection` now stores real secret values
@@ -284,6 +325,7 @@ mod tests {
         for secret in [
             "alice-secret",
             "sr-user:sr-secret",
+            "ksql-user:ksql-secret",
             "sr-ts-secret",
             "sr-ks-secret",
             "sr-ks-key-secret",
@@ -305,6 +347,7 @@ mod tests {
         assert_eq!(new_connection.sasl_username.as_deref(), Some("alice"));
         assert!(new_connection.sasl_password.is_none());
         assert!(new_connection.schema_registry_basic_auth_credentials.is_none());
+        assert!(new_connection.ksqldb_basic_auth_credentials.is_none());
         assert!(new_connection.schema_registry_trust_store_password.is_none());
         assert!(new_connection.schema_registry_keystore_password.is_none());
         assert!(new_connection.schema_registry_keystore_key_password.is_none());

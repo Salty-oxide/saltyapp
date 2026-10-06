@@ -53,6 +53,14 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Scoped in `capabilities/default.json` to `https://kafka.apache.org/*`
+        // — this is the app's only outbound-link surface and is deliberately
+        // held to one host. That pattern was verified against the plugin's own
+        // matcher (`glob::Pattern` with `require_literal_separator: false`), so
+        // the single trailing `*` covers both the path and the `#fragment` of
+        // `KRAFT_DOCS_URL`. Note `opener:default` would instead grant a blanket
+        // `https://*`, which is why the narrow permission is named explicitly.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -199,6 +207,7 @@ fn main() {
             commands::connections::connection_ping_bootstrap,
             commands::connections::connection_ping_zookeeper,
             commands::connections::connection_test,
+            commands::connections::connection_detect_version,
             commands::connections::connection_connect,
             commands::connections::connection_disconnect,
             commands::connections::connection_is_connected,
@@ -212,6 +221,12 @@ fn main() {
             commands::connections::connection_list_partitions,
             commands::connections::connection_describe_topic_config,
             commands::connections::connection_fetch_consumer_group_lag,
+            commands::acl::acl_list,
+            commands::acl::acl_for_resource,
+            commands::ksql::ksql_statement,
+            commands::ksql::ksql_stream_for_topic,
+            commands::ksql::ksql_query,
+            commands::ksql::ksql_cancel,
             commands::publish::connection_publish_messages,
             commands::publish::connection_write_denied_reason,
             commands::schema::topic_schema_get,

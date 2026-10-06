@@ -7,6 +7,7 @@ members = [
   "backend/avro",
   "backend/protobuf",
   "backend/schema-registry",
+  "backend/ksql",
   "src-tauri",
 ]
 
@@ -32,6 +33,7 @@ salty-kafka = { path = "backend/kafka" }
 salty-avro = { path = "backend/avro" }
 salty-protobuf = { path = "backend/protobuf" }
 salty-schema-registry = { path = "backend/schema-registry" }
+salty-ksql = { path = "backend/ksql" }
 
 # Release builds had no profile at all, so they ran on cargo's defaults:
 # `codegen-units = 16` (which deliberately trades optimization quality for

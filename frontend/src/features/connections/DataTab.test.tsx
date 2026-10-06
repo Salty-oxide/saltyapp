@@ -52,13 +52,10 @@ interface MockColDef {
   valueGetter?: (params: any) => string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cellRenderer?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  getQuickFilterText?: (params: any) => string;
 }
 interface MockGridProps {
   rowData: unknown[];
   onRowClicked: (event: { data: unknown; event?: { target: unknown } }) => void;
-  quickFilterText?: string;
   overlayNoRowsTemplate?: string;
   columnDefs: MockColDef[];
   loading?: boolean;
@@ -189,7 +186,7 @@ describe("DataTab", () => {
     expect(screen.getByLabelText("Partition")).toHaveValue("1");
   });
 
-  it("clears the search text and filter fields when switching to a different topic without remounting", async () => {
+  it("clears the filter fields when switching to a different topic without remounting", async () => {
     const user = userEvent.setup();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const { rerender } = render(
@@ -197,7 +194,6 @@ describe("DataTab", () => {
         <DataTab connectionId="1" topicName="orders" />
       </QueryClientProvider>,
     );
-    await user.type(screen.getByLabelText("Search messages"), "some-old-order-id");
     await user.clear(screen.getByLabelText("Max messages per partition"));
     await user.type(screen.getByLabelText("Max messages per partition"), "5");
 
@@ -207,15 +203,11 @@ describe("DataTab", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByLabelText("Search messages")).toHaveValue("");
     // A brand new topic's form starts at the default cap, not blank.
     expect(screen.getByLabelText("Max messages per partition")).toHaveValue("100");
-    // ...and its search box starts empty rather than inheriting the previous
-    // topic's, which would silently hide rows the new topic did return.
-    expect(screen.getByLabelText("Search messages")).toHaveValue("");
   });
 
-  it("keeps a topic's filter form and search text intact when switching away to a different topic and back", async () => {
+  it("keeps a topic's filter form intact when switching away to a different topic and back", async () => {
     const user = userEvent.setup();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const { rerender } = render(
@@ -226,7 +218,6 @@ describe("DataTab", () => {
     await user.clear(screen.getByLabelText("Max messages per partition"));
     await user.type(screen.getByLabelText("Max messages per partition"), "5");
     await user.type(screen.getByLabelText("Offset"), "100");
-    await user.type(screen.getByLabelText("Search messages"), "some-old-order-id");
 
     rerender(
       <QueryClientProvider client={client}>
@@ -235,9 +226,6 @@ describe("DataTab", () => {
     );
     // A brand new topic's form starts at the default cap, not blank.
     expect(screen.getByLabelText("Max messages per partition")).toHaveValue("100");
-    // ...and its search box starts empty rather than inheriting the previous
-    // topic's, which would silently hide rows the new topic did return.
-    expect(screen.getByLabelText("Search messages")).toHaveValue("");
 
     rerender(
       <QueryClientProvider client={client}>
@@ -247,9 +235,6 @@ describe("DataTab", () => {
 
     expect(screen.getByLabelText("Max messages per partition")).toHaveValue("5");
     expect(screen.getByLabelText("Offset")).toHaveValue("100");
-    // Keyed per topic like the fetch form, so coming back to a topic you'd
-    // searched restores the search rather than silently widening it.
-    expect(screen.getByLabelText("Search messages")).toHaveValue("some-old-order-id");
   });
 
   it("passes the current partitionId to viewMessage when a row is clicked, so the viewer can tell a topic-wide Data tab apart from one of its partitions'", () => {
@@ -760,125 +745,6 @@ describe("DataTab", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch messages");
   });
 
-  it("shows a search input above the grid", () => {
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    expect(screen.getByLabelText("Search messages")).toBeInTheDocument();
-  });
-
-  it("passes the search text to the grid as quickFilterText", async () => {
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.type(screen.getByLabelText("Search messages"), "order-1");
-
-    await waitFor(() => expect(lastGridProps?.quickFilterText).toBe("order-1"));
-  });
-
-  it("narrows the single loaded/total count to only messages matching the search text", async () => {
-    const messages = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: "b3JkZXItMQ==", payloadBase64: null, payloadSizeBytes: null, headers: [] },
-      { partition: 0, offset: 2, timestampMs: null, keyBase64: "b3RoZXI=", payloadBase64: null, payloadSizeBytes: null, headers: [] },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(countLine()).toBe("2 loaded of 2 matching"));
-
-    await user.type(screen.getByLabelText("Search messages"), "order-1");
-
-    await waitFor(() => expect(countLine()).toBe("1 loaded of 2 matching"));
-  });
-
-  it("warns that search is bounded when a loaded message is larger than the searched prefix", async () => {
-    const big = btoa("a".repeat(5000));
-    const messages = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: big, payloadSizeBytes: 5000, headers: [] },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-
-    expect(await screen.findByText(/Search matches only the first 4 KB/)).toBeInTheDocument();
-  });
-
-  it("does not warn about bounded search when every loaded message fits within the searched prefix", async () => {
-    const messages = [{ partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: "eA==", payloadSizeBytes: null, headers: [] }];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(countLine()).toBe("1 loaded of 1 matching"));
-
-    expect(screen.queryByText(/Search matches only/)).not.toBeInTheDocument();
-  });
-
-  // The reported bug. "Fetch message payload" off still returns each row's
-  // real size (the grid shows it, and the per-row Fetch payload button is
-  // priced off it) but no bytes at all — so a notice keyed on size alone
-  // announced a bounded search over values that had not been fetched, beside
-  // a blank Value column where the search could match nothing whatsoever.
-  it("does not warn about bounded search when the fetch pulled no payloads, however large the messages are", async () => {
-    const messages = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: 5_000_000, headers: [] },
-      { partition: 0, offset: 2, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: 9_000_000, headers: [] },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(countLine()).toBe("2 loaded of 2 matching"));
-
-    expect(screen.queryByText(/Search matches only/)).not.toBeInTheDocument();
-  });
-
-  // ...but the same rows do warn once their payloads are actually pulled in,
-  // one at a time, by the Value column's per-row button.
-  it("starts warning about bounded search once a large payload is lazily fetched into a row", async () => {
-    const messages = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: 5_000_000, headers: [] },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(countLine()).toBe("1 loaded of 1 matching"));
-    expect(screen.queryByText(/Search matches only/)).not.toBeInTheDocument();
-
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [
-          { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: btoa("a".repeat(5000)), payloadSizeBytes: 5_000_000, headers: [] },
-        ],
-        totalMatching: 1,
-      }),
-    });
-    await lastGridProps?.context.fetchPayload(messages[0]);
-
-    expect(await screen.findByText(/Search matches only the first 4 KB/)).toBeInTheDocument();
-  });
-
-  it("does not warn when every loaded payload sits inside the searched prefix", async () => {
-    const body = btoa("a".repeat(1000));
-    const messages = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: body, payloadSizeBytes: 1000, headers: [] },
-      { partition: 0, offset: 2, timestampMs: null, keyBase64: null, payloadBase64: body, payloadSizeBytes: 4000, headers: [] },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: messages.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(countLine()).toBe("2 loaded of 2 matching"));
-
-    expect(screen.queryByText(/Search matches only/)).not.toBeInTheDocument();
-  });
-
   it("shows nothing loaded before any fetch has run", () => {
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
     expect(countLine()).toBe("0 loaded of 0 matching");
@@ -1034,26 +900,6 @@ describe("DataTab", () => {
     resolveSecond({ messages: [], totalMatching: 0 });
   });
 
-  it("excludes partition, offset, and timestamp from the quick filter, leaving only key and value searchable", () => {
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    const columnDefs = lastGridProps?.columnDefs ?? [];
-    // Matched by prefix: the timestamp column's header carries the system's
-    // timezone ("Timestamp (IST)"), which varies with the machine running
-    // this — see `localTimeZoneLabel`.
-    const excluded = ["Partition", "Offset", "Timestamp"];
-    for (const headerName of excluded) {
-      const colDef = columnDefs.find((c) => c.headerName?.startsWith(headerName));
-      expect(colDef).toBeDefined();
-      expect(colDef?.getQuickFilterText?.({})).toBe("");
-    }
-
-    const keyColDef = columnDefs.find((c) => c.headerName === "Key");
-    const valueColDef = columnDefs.find((c) => c.headerName === "Value");
-    expect(keyColDef?.getQuickFilterText).toBeUndefined();
-    expect(valueColDef?.getQuickFilterText).toBeUndefined();
-  });
-
   it("selects a message into the viewer store when a grid row is clicked", () => {
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
     const message = { partition: 0, offset: 5, timestampMs: null, keyBase64: null, payloadBase64: "eA==" };
@@ -1117,7 +963,7 @@ describe("DataTab", () => {
 
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent(/512 MB/);
-    expect(notice).toHaveClass("data-tab-search-notice--warning");
+    expect(notice).toHaveClass("data-tab-notice--warning");
   });
 
   it("shows no byte-budget notice for a fetch that finished within it", async () => {
@@ -1153,29 +999,6 @@ describe("DataTab", () => {
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
-  });
-
-  // Driven by the size the backend reports, not by measuring the base64 it
-  // sent: that base64 is now itself a preview, so measuring it would report
-  // every truncated message as comfortably fitting.
-  it("warns that search is bounded using each message's real size, not the preview it was sent", async () => {
-    const messages = [
-      {
-        partition: 0,
-        offset: 1,
-        timestampMs: null,
-        keyBase64: null,
-        payloadBase64: btoa("a".repeat(VALUE_PREVIEW_BYTES)),
-        payloadSizeBytes: 3_145_728,
-      },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: 1 }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-
-    expect(await screen.findByText(/Search matches only the first/)).toBeInTheDocument();
   });
 
   it("clears the viewed message when Fetch runs again, so the right panel doesn't keep showing a row from a superseded fetch", async () => {
@@ -1413,7 +1236,6 @@ describe("DataTab", () => {
         "tab-1:1:orders:all": {
           sortModel: [{ colId: "offset", sort: "desc" }],
           filterModel: { partition: { filterType: "number", type: "equals", filter: 2 } },
-          searchText: "",
         },
       },
     });
@@ -1442,7 +1264,6 @@ describe("DataTab", () => {
         "tab-1:1:orders:all": {
           sortModel: [{ colId: "offset", sort: "desc" }],
           filterModel: {},
-          searchText: "",
         },
       },
     });
@@ -1469,7 +1290,6 @@ describe("DataTab", () => {
         "tab-1:1:order-created:all": {
           sortModel: [{ colId: "partition", sort: "asc" }],
           filterModel: {},
-          searchText: "",
         },
       },
     });

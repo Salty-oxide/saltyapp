@@ -1,4 +1,6 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FindBar } from "./FindBar";
+import { useFind } from "./useFind";
 
 export interface LineNumberedTextProps {
   text: string;
@@ -14,7 +16,19 @@ export interface LineNumberedTextProps {
    * payloads in.
    */
   forceMonospace?: boolean;
+  /**
+   * Said beside the find count when this view is showing only part of its
+   * content — the Raw and Hex previews cap what they render.
+   *
+   * Without it, "No results" is a lie for text that is in the payload but
+   * past the cap: the same class of wrong answer the find bar exists to stop
+   * the DOM from giving.
+   */
+  findScopeNote?: string;
 }
+
+/** Fallback row height for working out where a match sits, when nothing can be measured (jsdom reports every box as zero). */
+const FALLBACK_LINE_HEIGHT_PX = 18;
 
 /**
  * Monospaced text with a line-number gutter, the way an editor shows a file.
@@ -29,31 +43,86 @@ export interface LineNumberedTextProps {
  * and scrolls horizontally instead. Wrapping would slide the payload down
  * against a gutter that cannot know it happened, and every number below a
  * wrapped line would point at the wrong text.
+ *
+ * **The body stays one text node.** Find highlights the current match with a
+ * single absolutely-positioned strip rather than by splitting the text into
+ * per-line elements: a 256 KB preview is tens of thousands of lines, and
+ * giving each one an element is precisely the freeze the caps upstream exist
+ * to prevent. One overlay costs nothing and the `<pre>` is untouched.
  */
-export function LineNumberedText({ text, ariaLabel, forceMonospace = false }: LineNumberedTextProps) {
-  // Counting newlines is O(text) and this renders on every re-render of the
-  // viewer (panel tab switches, a hover, a parent's state change), so it is
-  // memoised alongside the gutter string it feeds — on a 256 KB preview that
-  // is tens of thousands of numbers to build.
-  const gutter = useMemo(() => {
-    let lines = 1;
-    for (let i = 0; i < text.length; i++) {
-      if (text.charCodeAt(i) === 10) lines++;
-    }
-    // A trailing newline ends the last line rather than starting an empty
-    // one; numbering it would show a number against no text.
-    if (text.endsWith("\n")) lines--;
-    const numbers: string[] = [];
-    for (let n = 1; n <= Math.max(lines, 1); n++) numbers.push(String(n));
-    return numbers.join("\n");
+export function LineNumberedText({
+  text,
+  ariaLabel,
+  forceMonospace = false,
+  findScopeNote,
+}: LineNumberedTextProps) {
+  const bodyRef = useRef<HTMLPreElement | null>(null);
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+  const [lineHeight, setLineHeight] = useState(FALLBACK_LINE_HEIGHT_PX);
+
+  /**
+   * The lines, which are both what the gutter numbers and what find searches.
+   *
+   * A trailing newline ends the last line rather than starting an empty one;
+   * numbering it would show a number against no text, and find would offer a
+   * blank line as a match.
+   */
+  const lines = useMemo(() => {
+    const split = text.split("\n");
+    if (split.length > 1 && split[split.length - 1] === "") split.pop();
+    return split;
   }, [text]);
 
+  // Counting was O(text) on every re-render of the viewer (panel tab
+  // switches, a hover, a parent's state change); it now falls out of the
+  // split above, which is memoised on the same key.
+  const gutter = useMemo(() => lines.map((_, index) => String(index + 1)).join("\n"), [lines]);
+
+  // Measured from the gutter rather than from `getComputedStyle`: the gutter
+  // holds exactly one row per line, so its height divided by its line count
+  // is the row height as actually laid out, font settings and all.
+  const gutterRef = useRef<HTMLPreElement | null>(null);
+  useEffect(() => {
+    const height = gutterRef.current?.getBoundingClientRect().height ?? 0;
+    if (height > 0 && lines.length > 0) setLineHeight(height / lines.length);
+  }, [lines.length, forceMonospace]);
+
+  // `reveal` cannot scroll directly: the strip moves on the render that
+  // follows this call, so there is nothing at the new offset yet. The effect
+  // below scrolls once it is in place.
+  const reveal = useCallback(() => {}, []);
+  const find = useFind(lines, reveal);
+
+  useEffect(() => {
+    // Optional-called: jsdom does not implement `scrollIntoView`.
+    if (find.activeUnit >= 0) highlightRef.current?.scrollIntoView?.({ block: "center" });
+  }, [find.activeUnit]);
+
   return (
-    <div className={`code-view${forceMonospace ? " code-view--monospace" : ""}`} role="group" aria-label={ariaLabel}>
-      <pre className="code-gutter" aria-hidden="true">
-        {gutter}
-      </pre>
-      <pre className="code-body message-payload-body">{text}</pre>
+    // A wrapper rather than a fragment: the registry needs one element to
+    // decide whether a Ctrl+F belongs to this view. `display: contents` keeps
+    // it out of the layout the gutter alignment depends on.
+    <div className="code-find-scope" ref={find.containerRef}>
+      <FindBar find={find} scopeNote={findScopeNote} />
+      <div className={`code-view${forceMonospace ? " code-view--monospace" : ""}`} role="group" aria-label={ariaLabel}>
+        <pre className="code-gutter" aria-hidden="true" ref={gutterRef}>
+          {gutter}
+        </pre>
+        <div className="code-body-wrap">
+          {find.activeUnit >= 0 && (
+            <div
+              ref={highlightRef}
+              className="code-find-highlight"
+              data-testid="find-highlight"
+              aria-hidden="true"
+              style={{ top: find.activeUnit * lineHeight, height: lineHeight }}
+            />
+          )}
+          <pre className="code-body message-payload-body" ref={bodyRef}>
+            {text}
+          </pre>
+        </div>
+      </div>
     </div>
   );
 }

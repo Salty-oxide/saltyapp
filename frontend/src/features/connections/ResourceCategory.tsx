@@ -36,6 +36,16 @@ export interface ResourceCategoryProps<T> {
    * presenting the whole connection as broken.
    */
   error?: Error | null;
+  /**
+   * Rendered inside the expanded category, above the list.
+   *
+   * For a category whose emptiness needs explaining rather than reporting as
+   * a failure — Access Control on a cluster with no authorizer is neither an
+   * error nor ordinary emptiness, and rendering it through `error` would
+   * present an unsecured cluster as a broken one. Deliberately an opaque
+   * node so this component stays ignorant of what the notice means.
+   */
+  notice?: React.ReactNode;
 }
 
 /**
@@ -57,6 +67,7 @@ export function ResourceCategory<T>({
   additionalFilter,
   contextMenuItems,
   error,
+  notice,
 }: ResourceCategoryProps<T>) {
   const expanded = useTreeUiStore((s) => s.expanded[key] ?? false);
   const toggleExpanded = useTreeUiStore((s) => s.toggleExpanded);
@@ -134,6 +145,7 @@ export function ResourceCategory<T>({
             />
           </div>
           {error && <CategoryLoadWarning label={label} error={error} />}
+          {notice}
           {isLoading && <p>Loading…</p>}
           {filtered.length > VIRTUALIZE_THRESHOLD ? (
             // react-window v2 replaced `FixedSizeList` with a single `List`:

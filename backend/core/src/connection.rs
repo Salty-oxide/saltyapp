@@ -59,6 +59,12 @@ pub struct Connection {
     pub sasl_oauth_url: Option<String>,
     pub schema_registry_endpoint: Option<String>,
     pub schema_registry_basic_auth_credentials: Option<String>,
+    /// Base URL of this cluster's ksqlDB server, e.g. `http://localhost:8088`.
+    /// Absent for the many clusters that do not run one.
+    pub ksqldb_endpoint: Option<String>,
+    /// `user:password`, the same shape as the schema registry's credentials.
+    /// A secret: excluded from `PortableConnection`.
+    pub ksqldb_basic_auth_credentials: Option<String>,
     pub schema_registry_trust_store_location: Option<String>,
     pub schema_registry_trust_store_password: Option<String>,
     pub schema_registry_keystore_location: Option<String>,
@@ -110,6 +116,12 @@ pub struct NewConnection {
     pub sasl_oauth_url: Option<String>,
     pub schema_registry_endpoint: Option<String>,
     pub schema_registry_basic_auth_credentials: Option<String>,
+    /// Base URL of this cluster's ksqlDB server, e.g. `http://localhost:8088`.
+    /// Absent for the many clusters that do not run one.
+    pub ksqldb_endpoint: Option<String>,
+    /// `user:password`, the same shape as the schema registry's credentials.
+    /// A secret: excluded from `PortableConnection`.
+    pub ksqldb_basic_auth_credentials: Option<String>,
     pub schema_registry_trust_store_location: Option<String>,
     pub schema_registry_trust_store_password: Option<String>,
     pub schema_registry_keystore_location: Option<String>,
@@ -240,6 +252,8 @@ mod tests {
             sasl_oauth_url: None,
             schema_registry_endpoint: None,
             schema_registry_basic_auth_credentials: None,
+            ksqldb_endpoint: None,
+            ksqldb_basic_auth_credentials: None,
             schema_registry_trust_store_location: None,
             schema_registry_trust_store_password: None,
             schema_registry_keystore_location: None,
@@ -272,6 +286,8 @@ mod tests {
             sasl_oauth_url: None,
             schema_registry_endpoint: None,
             schema_registry_basic_auth_credentials: None,
+            ksqldb_endpoint: None,
+            ksqldb_basic_auth_credentials: None,
             schema_registry_trust_store_location: None,
             schema_registry_trust_store_password: None,
             schema_registry_keystore_location: None,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { setInvokeHandlers } from "./testInvoke";
-import { api } from "./tauri";
+import { api, isKRaftOnly, KAFKA_VERSIONS } from "./tauri";
 import { useGeneralSettingsStore } from "../features/settings/useGeneralSettingsStore";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -102,5 +102,48 @@ describe("writeDeniedReason", () => {
   it("reports null for a topic with no recorded denial", async () => {
     setInvokeHandlers({ connection_write_denied_reason: () => null });
     await expect(api.writeDeniedReason("conn-1", "orders")).resolves.toBeNull();
+  });
+});
+
+describe("KAFKA_VERSIONS", () => {
+  it("offers 3.8, 3.9 and the 4.x line", () => {
+    expect(KAFKA_VERSIONS).toContain("3.8");
+    expect(KAFKA_VERSIONS).toContain("3.9");
+    expect(KAFKA_VERSIONS).toContain("4.0");
+    expect(KAFKA_VERSIONS).toContain("4.3");
+  });
+
+  it("does not offer 2.9, which Kafka never released", () => {
+    expect(KAFKA_VERSIONS).not.toContain("2.9");
+  });
+
+  it("ends on the newest version, which is what emptyDraft() defaults to", () => {
+    expect(KAFKA_VERSIONS[KAFKA_VERSIONS.length - 1]).toBe("4.3");
+  });
+});
+
+describe("isKRaftOnly", () => {
+  it("is false for every version that can still run ZooKeeper", () => {
+    expect(isKRaftOnly("0.11")).toBe(false);
+    expect(isKRaftOnly("2.8")).toBe(false);
+    expect(isKRaftOnly("3.9")).toBe(false);
+  });
+
+  it("is true from 4.0 on, which removed ZooKeeper", () => {
+    expect(isKRaftOnly("4.0")).toBe(true);
+    expect(isKRaftOnly("4.1")).toBe(true);
+    expect(isKRaftOnly("4.3")).toBe(true);
+  });
+
+  it("is true for a major version beyond the offered list", () => {
+    // A version detected from a future broker, or typed into a DB row by
+    // hand, must still hide ZooKeeper rather than fall through.
+    expect(isKRaftOnly("10.0")).toBe(true);
+  });
+
+  it("is false for a version it cannot parse, so unknown hides nothing", () => {
+    expect(isKRaftOnly("")).toBe(false);
+    expect(isKRaftOnly("not-a-version")).toBe(false);
+    expect(isKRaftOnly("2.9")).toBe(false);
   });
 });

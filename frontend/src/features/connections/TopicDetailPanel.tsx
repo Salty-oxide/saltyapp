@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { AclAccessTab } from "./AclAccessTab";
+import { TopicKsqlTab } from "../ksql/TopicKsqlTab";
 import { ConfigTab } from "./ConfigTab";
 import { PartitionsTab } from "./PartitionsTab";
 import { TopicMetadataTab } from "./TopicMetadataTab";
@@ -12,7 +14,7 @@ export interface TopicDetailPanelProps {
   topicName: string;
 }
 
-type TopicTabId = "data" | "metadata" | "partitions" | "schema" | "config";
+type TopicTabId = "data" | "metadata" | "partitions" | "schema" | "config" | "access" | "query";
 
 /**
  * Data leads because it is what opening a topic is for — reading its
@@ -26,6 +28,9 @@ type TopicTabId = "data" | "metadata" | "partitions" | "schema" | "config";
  *
  * Config is last because it is the only tab that is purely read-back — the
  * broker's own view of the topic's settings, which nothing here can change.
+ * Access sits after it for the same reason: it is the broker's own view of
+ * who may touch this topic, and equally unchangeable from here. The two
+ * read-only tabs are kept together at the end.
  */
 const TOPIC_TABS: { id: TopicTabId; label: string }[] = [
   { id: "data", label: "Data" },
@@ -33,6 +38,10 @@ const TOPIC_TABS: { id: TopicTabId; label: string }[] = [
   { id: "partitions", label: "Partitions" },
   { id: "schema", label: "Schema" },
   { id: "config", label: "Config" },
+  { id: "access", label: "Access" },
+  // Last, and read-only like the two before it — ksqlDB is a separate server
+  // and this tab only reads from it.
+  { id: "query", label: "Query" },
 ];
 
 export function TopicDetailPanel({ connectionId, topicName }: TopicDetailPanelProps) {
@@ -65,6 +74,10 @@ export function TopicDetailPanel({ connectionId, topicName }: TopicDetailPanelPr
         {activeTab === "partitions" && <PartitionsTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "schema" && <TopicSchemaTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "config" && <ConfigTab connectionId={connectionId} topicName={topicName} />}
+        {activeTab === "access" && (
+          <AclAccessTab connectionId={connectionId} resourceType="topic" resourceName={topicName} />
+        )}
+        {activeTab === "query" && <TopicKsqlTab connectionId={connectionId} topicName={topicName} />}
       </div>
     </div>
   );

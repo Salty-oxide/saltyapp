@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ConnectionTabId, ConnectionTabsView } from "./modal/ConnectionTabsView";
+import { CONNECTION_TABS, ConnectionTabId, ConnectionTabsView } from "./modal/ConnectionTabsView";
+import { KsqlWorkspace } from "../ksql/KsqlWorkspace";
 import { ConnectionDraft, connectionToDraft, draftsEqual, toNewConnection } from "./modal/draft";
 import { PingResult } from "./modal/PingResult";
 import {
@@ -13,6 +14,14 @@ import {
 export interface ClusterDetailPanelProps {
   connectionId: string;
 }
+
+/**
+ * The cluster panel's tabs: the connection's own, plus the ksqlDB workspace.
+ *
+ * Query is last because it is the only one that is not configuration — the
+ * others describe how to reach the cluster, this one does something with it.
+ */
+const CLUSTER_TABS = [...CONNECTION_TABS, { id: "query" as const, label: "Query" }];
 
 export function ClusterDetailPanel({ connectionId }: ClusterDetailPanelProps) {
   const { data: connections } = useConnectionsQuery();
@@ -89,12 +98,26 @@ export function ClusterDetailPanel({ connectionId }: ClusterDetailPanelProps) {
       </header>
 
       <ConnectionTabsView
+        // The connection's own tabs plus a Query workspace. Appended here
+        // rather than added to `CONNECTION_TABS` because the New Connection
+        // modal shares that list, and a half-written connection has nothing to
+        // query.
+        tabs={CLUSTER_TABS}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         draft={draft}
         onChange={updateDraft}
         disabled={connected}
-      />
+      >
+        {activeTab === "query" &&
+          (connection ? (
+            <KsqlWorkspace connectionId={connection.id} scope="cluster" />
+          ) : (
+            <p className="ksql-notice" role="status">
+              Save this connection before running a query against it.
+            </p>
+          ))}
+      </ConnectionTabsView>
 
       {error && (
         <p role="alert" className="connection-modal-error">

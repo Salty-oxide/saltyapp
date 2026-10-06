@@ -54,7 +54,8 @@ cargo llvm-cov \
   -p salty-avro \
   -p salty-protobuf \
   -p salty-schema-registry \
-  -p salty-kafka
+  -p salty-kafka \
+  -p salty-ksql
 echo "    -> coverage/backend.lcov"
 
 echo
@@ -65,4 +66,5 @@ cargo llvm-cov report --summary-only \
   -p salty-avro \
   -p salty-protobuf \
   -p salty-schema-registry \
-  -p salty-kafka
+  -p salty-kafka \
+  -p salty-ksql

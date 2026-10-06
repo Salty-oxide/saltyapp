@@ -1196,7 +1196,11 @@ textarea {
   font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }
-.data-tab-search {
+/* The consumer group panel's own topic filter. Was `.data-tab-search`, shared
+   with the Data tab's message search until that search was removed; renamed
+   rather than left pointing at a rule named for something that no longer
+   exists. */
+.panel-search {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1204,7 +1208,7 @@ textarea {
   color: var(--color-fg-muted);
   margin-bottom: 8px;
 }
-.data-tab-search input {
+.panel-search input {
   font: inherit;
   color: var(--color-fg);
   background: var(--color-bg);
@@ -1212,15 +1216,15 @@ textarea {
   border-radius: 4px;
   padding: 5px 8px;
 }
-.data-tab-search-notice {
-  margin: -4px 0 8px;
+.data-tab-notice {
+  margin: 0 0 8px;
   font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }
 /* Mirrors the backend's own "warn"-level log for the same event (see
    `emit_log` in the fetch_messages command) — surfaced here too since a
    fetch stopping short of the filter is easy to miss in the log panel. */
-.data-tab-search-notice--warning {
+.data-tab-notice--warning {
   color: var(--color-status-amber);
 }
 .settings-panel__hint {
@@ -1595,6 +1599,23 @@ textarea {
   margin: 0;
   padding-left: 8px;
   flex: 1 1 auto;
+}
+/* Anchors the find highlight over the body. The body itself stays a single
+   `<pre>` text node — see `LineNumberedText` — so the highlight is a strip
+   laid over the right row rather than markup woven into the text. */
+.code-body-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.code-find-highlight {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-status-amber) 34%, transparent);
+  outline: 1px solid var(--color-status-amber);
+  outline-offset: -1px;
 }
 .message-payload-body {
   /* Not `pre-wrap`: one logical line has to occupy exactly one visual row or
@@ -2029,6 +2050,24 @@ textarea {
   cursor: not-allowed;
 }
 
+/* The version dropdown plus its Detect button. `align-items: flex-end`
+   because `.dropdown-field` is a column carrying its own label — without
+   it the button lines up with the label instead of the dropdown. */
+.connection-modal-detect-row {
+  align-items: flex-end;
+}
+.connection-modal-detect-row .dropdown-field {
+  flex: 1;
+}
+
+.detect-result {
+  font-size: var(--font-size-sm);
+  margin: -4px 0 10px;
+}
+.detect-result p {
+  margin: 0 0 2px;
+}
+
 .ping-result,
 .connection-modal-error {
   font-size: var(--font-size-sm);
@@ -2438,4 +2477,266 @@ textarea {
   grid-template-columns: 1fr;
   max-height: 232px;
   overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------- ACLs -- */
+
+/* Explains a listing that shows nothing. Never decorative: an empty ACL list
+   means opposite things on an unsecured cluster and on one that denies by
+   default, so this is the only thing separating them. */
+.acl-notice {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  line-height: 1.5;
+}
+.acl-notice--warning {
+  border-left-color: var(--color-status-amber);
+  color: var(--color-fg);
+}
+.acl-notice code {
+  font-family: var(--font-mono, monospace);
+}
+
+.acl-section-heading {
+  margin: 16px 0 6px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+}
+/* The matrix is derived; the bindings are what the broker said. The tag is
+   what keeps a reader from reading the first as the second. */
+.acl-derived-tag {
+  margin-left: 8px;
+  font-weight: 400;
+  font-style: italic;
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+
+.acl-table-scroll {
+  overflow-x: auto;
+}
+.acl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+.acl-table th,
+.acl-table td {
+  padding: 5px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.acl-table th {
+  font-weight: 600;
+  color: var(--color-fg-muted);
+}
+.acl-cell-name {
+  font-family: var(--font-mono, monospace);
+}
+
+/* PREFIXED is the pattern type that reaches resources which do not exist yet,
+   so it is the one that has to catch the eye. */
+.acl-pattern {
+  font-size: calc(var(--font-size-sm) * 0.9);
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+  color: var(--color-fg-muted);
+}
+.acl-pattern--prefixed {
+  border-color: var(--color-status-amber);
+  color: var(--color-status-amber);
+}
+.acl-prefix-toggle {
+  margin-left: 6px;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font: inherit;
+}
+.acl-row-matches td {
+  white-space: normal;
+  color: var(--color-fg-muted);
+  font-size: calc(var(--font-size-sm) * 0.95);
+}
+.acl-matches-list {
+  font-family: var(--font-mono, monospace);
+}
+
+/* Deny overrides every allow and is rare enough to be easy to skim past. */
+.acl-row--deny {
+  background: color-mix(in srgb, var(--color-status-red, crimson) 8%, transparent);
+}
+.acl-permission--deny {
+  color: var(--color-status-red, crimson);
+  font-weight: 600;
+}
+.acl-permission--allow {
+  color: var(--color-fg-muted);
+}
+
+.acl-verdict--allow {
+  color: var(--color-status-green, seagreen);
+}
+.acl-verdict--deny {
+  color: var(--color-fg-muted);
+}
+/* An implied grant has no binding of its own to revoke, so it must never read
+   as identical to a direct one. */
+.acl-verdict-implied,
+.acl-verdict-wildcard {
+  font-size: calc(var(--font-size-sm) * 0.85);
+  font-style: italic;
+  color: var(--color-fg-muted);
+}
+
+.acl-binding-count {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+.acl-self-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+  font-size: calc(var(--font-size-sm) * 0.85);
+  font-weight: 400;
+  color: var(--color-fg-muted);
+}
+.acl-resource-group {
+  margin-bottom: 12px;
+}
+.acl-principal-panel {
+  padding: 12px 16px;
+  overflow: auto;
+}
+/* A prefix is a prefix of something — without this it reads as a literal
+   name that happens to end in a hyphen. */
+.acl-prefix-ellipsis {
+  color: var(--color-status-amber);
+  opacity: 0.8;
+}
+
+/* --------------------------------------------------- JSON tree find bar -- */
+
+/* The tree is virtualized, so this bar is the *only* way to find text in a
+   large payload: the webview has no native find, and a DOM-based one would
+   miss every row outside the rendered window. */
+.json-tree-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-subtle, var(--color-bg));
+}
+.json-tree-find-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 3px 7px;
+}
+.json-tree-find-count {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+  /* Reserves room so the arrows don't shuffle sideways as the count changes
+     from "9 of 12" to "10 of 12". */
+  min-width: 9ch;
+  text-align: right;
+}
+
+/* Two levels, because "matches" and "you are here" are different questions —
+   without the second, pressing Enter looks like it did nothing on a screen
+   where every row matches. */
+.json-tree-line--match {
+  background: color-mix(in srgb, var(--color-status-amber) 18%, transparent);
+}
+.json-tree-line--match-current {
+  background: color-mix(in srgb, var(--color-status-amber) 42%, transparent);
+  outline: 1px solid var(--color-status-amber);
+  outline-offset: -1px;
+}
+/* Exists only so the find registry has an element to attribute a Ctrl+F to;
+   it must not participate in the layout the gutter alignment depends on. */
+.code-find-scope {
+  display: contents;
+}
+
+/* ------------------------------------------------------- ksqlDB workspace -- */
+
+.ksql-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 0;
+}
+.ksql-editor-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+/* A plain textarea on purpose — see the note in `KsqlWorkspace`: a syntax
+   highlighter would cost more bundle than AG Grid, which is already two
+   thirds of it. */
+.ksql-editor {
+  font-family: var(--font-family-mono, ui-monospace, "SF Mono", Consolas, monospace);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  resize: vertical;
+  min-height: 64px;
+}
+.ksql-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.ksql-summary {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+.ksql-notice {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  line-height: 1.5;
+}
+.ksql-notice--warning {
+  border-left-color: var(--color-status-amber);
+  color: var(--color-fg);
+}
+.ksql-notice code {
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+}
+.ksql-waiting {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+/* A definite height so AG Grid has something to fill, the same way the Data
+   tab's grid is sized. */
+.ksql-results-grid {
+  flex: 1 1 auto;
+  min-height: 320px;
 }

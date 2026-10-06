@@ -1,0 +1,23 @@
+[package]
+name = "salty-ksql"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+salty-core = { workspace = true }
+error-stack = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+# `http2` because ksqlDB's `/query-stream` is HTTP/2, and `stream` because a
+# push query's body never ends — `.json()` would wait for an EOF that never
+# comes, so rows have to be read incrementally off `bytes_stream()`.
+# `native-tls-vendored` matches `salty-schema-registry`: this is a desktop app
+# shipped to machines with no system OpenSSL to link against.
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "native-tls-vendored",
+  "http2",
+  "stream",
+] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }

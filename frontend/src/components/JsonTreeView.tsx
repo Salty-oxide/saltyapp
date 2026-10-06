@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { List, RowComponentProps } from "react-window";
+import { List, ListImperativeAPI, RowComponentProps } from "react-window";
 import { INDENT_PX, JsonLine, JsonTreeOverrides, LEAD_PX, NO_OVERRIDES, flattenJsonTree } from "./jsonTreeLines";
+import { FindBar } from "./FindBar";
+import { lineSearchText } from "./jsonTreeSearch";
+import { useFind } from "./useFind";
 
 export interface JsonTreeViewProps {
   value: unknown;
@@ -78,6 +81,10 @@ interface JsonTreeRowProps {
   onToggle: (path: string, expanded: boolean) => void;
   /** Width of the document's widest line, so the horizontal scroll extent doesn't change as rows come and go. */
   contentWidth: number | null;
+  /** Line indices matching the find query. A Set because every rendered row asks. */
+  matchedLines: ReadonlySet<number>;
+  /** The match the reader is currently standing on, or -1 when there is none. */
+  currentMatchLine: number;
 }
 
 /** The contents of one row, without the positioning the list wraps it in. */
@@ -135,10 +142,21 @@ function JsonTreeRow({
   lineNumbers,
   onToggle,
   contentWidth,
+  matchedLines,
+  currentMatchLine,
 }: RowComponentProps<JsonTreeRowProps>) {
   const line = lines[index];
+  // Two levels of highlight, because "this row matches" and "this is the one
+  // you are standing on" are different questions — without the second,
+  // pressing Enter appears to do nothing on a screen where every row matches.
+  const isMatch = matchedLines.has(index);
+  const isCurrent = index === currentMatchLine;
+  const matchClass = isCurrent ? " json-tree-line--match-current" : isMatch ? " json-tree-line--match" : "";
   return (
-    <div className="json-tree-line" style={contentWidth === null ? style : { ...style, minWidth: contentWidth }}>
+    <div
+      className={`json-tree-line${matchClass}`}
+      style={contentWidth === null ? style : { ...style, minWidth: contentWidth }}
+    >
       {/* The number used to be a CSS counter on `.json-tree-line::before`,
           which counted the elements in the DOM. Only a windowful of those
           exists now, so every screen would have restarted at 1 — the row's
@@ -264,6 +282,23 @@ export function JsonTreeView({ value, onOpenInNewTab, lineNumbers = false, showT
     });
   }, []);
 
+  // --- Find -------------------------------------------------------------
+  //
+  // Searching the *model*, not the DOM. The list is virtualized, so only a
+  // screenful of rows exists at any moment (measured: 32 rows of a 503-line
+  // document). A DOM-based find — and the webview has no native one anyway —
+  // would report "not found" for text that is plainly in the payload.
+  const listRef = useRef<ListImperativeAPI | null>(null);
+  const findUnits = useMemo(() => lines.map(lineSearchText), [lines]);
+  const reveal = useCallback((row: number) => {
+    // `align: "center"` rather than "auto": a match scrolled to the very
+    // bottom edge is technically visible and practically missed.
+    listRef.current?.scrollToRow({ index: row, align: "center", behavior: "auto" });
+  }, []);
+  const find = useFind(findUnits, reveal);
+  const matchedLines = useMemo(() => new Set(find.matches), [find.matches]);
+  const currentMatchLine = find.activeUnit;
+
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
@@ -279,14 +314,14 @@ export function JsonTreeView({ value, onOpenInNewTab, lineNumbers = false, showT
   }
 
   const rowProps = useMemo<JsonTreeRowProps>(
-    () => ({ lines, lineNumbers, onToggle, contentWidth }),
-    [lines, lineNumbers, onToggle, contentWidth],
+    () => ({ lines, lineNumbers, onToggle, contentWidth, matchedLines, currentMatchLine }),
+    [lines, lineNumbers, onToggle, contentWidth, matchedLines, currentMatchLine],
   );
   // Must not be inline: `List` calls it during render and cannot memoize it.
   const rowKey = useCallback((index: number, data: JsonTreeRowProps) => data.lines[index].key, []);
 
   return (
-    <div className="json-tree json-tree--virtual">
+    <div className="json-tree json-tree--virtual" ref={find.containerRef}>
       {showToolbar && (
         <div className="json-tree-toolbar">
           {onOpenInNewTab && (
@@ -311,6 +346,7 @@ export function JsonTreeView({ value, onOpenInNewTab, lineNumbers = false, showT
           </button>
         </div>
       )}
+      <FindBar find={find} />
       <List<JsonTreeRowProps>
         className={`json-tree-body json-tree-body--virtual${lineNumbers ? " json-tree-body--numbered" : ""}`}
         role="tree"
@@ -324,6 +360,7 @@ export function JsonTreeView({ value, onOpenInNewTab, lineNumbers = false, showT
         rowKey={rowKey}
         rowProps={rowProps}
         rowComponent={JsonTreeRow}
+        listRef={listRef}
       />
       {/* One sample string in the tree's own font, laid out and never painted.
           Everything the list needs to know about pixels comes from this: the

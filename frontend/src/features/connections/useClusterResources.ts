@@ -1,5 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  AclResourceAccess,
+  AclResourceType,
   api,
   ConsumerGroupLag,
   MessageFetchResult,
@@ -84,6 +86,46 @@ export function useConsumerGroups(connectionId: string, enabled: boolean) {
   return useQuery({
     queryKey: ["consumer-groups", connectionId],
     queryFn: () => api.listConsumerGroups(connectionId),
+    enabled,
+    ...CLUSTER_LISTING_OPTIONS,
+  });
+}
+
+/**
+ * Backs the tree's "Access Control" sub-list.
+ *
+ * Lazily enabled, like Consumers and for the same reason: listing ACLs needs
+ * `Describe` on the `Cluster` resource, which a principal with full access to
+ * every topic is routinely not granted. Paying that round trip — and
+ * surfacing that refusal — on every connect, for a category the user may
+ * never open, is work nobody asked for.
+ */
+export function useAcls(connectionId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["acls", connectionId],
+    queryFn: () => api.listAcls(connectionId),
+    enabled,
+    ...CLUSTER_LISTING_OPTIONS,
+  });
+}
+
+/**
+ * Backs a topic's or consumer group's Access tab.
+ *
+ * A separate broker call rather than a filter over `useAcls`: the backend
+ * sends this one in MATCH mode so the *broker* resolves which literal,
+ * prefixed and wildcard patterns govern the name. Filtering client-side would
+ * mean reimplementing the authorizer's pattern matching.
+ */
+export function useResourceAcls(
+  connectionId: string,
+  resourceType: AclResourceType,
+  resourceName: string,
+  enabled: boolean,
+) {
+  return useQuery<AclResourceAccess>({
+    queryKey: ["acls", connectionId, resourceType, resourceName],
+    queryFn: () => api.aclsForResource(connectionId, resourceType, resourceName),
     enabled,
     ...CLUSTER_LISTING_OPTIONS,
   });

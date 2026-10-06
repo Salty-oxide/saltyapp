@@ -47,14 +47,24 @@ describe("ConnectionModal", () => {
   });
 
   /** Security and Authentication were two tabs until they were merged. */
-  it("offers exactly three tabs, with no separate Authentication or Advanced tab", () => {
+  it("offers only configuration tabs, with no separate Authentication or Advanced tab", () => {
     renderWithClient(<ConnectionModal onAdd={vi.fn()} onCancel={vi.fn()} />);
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Properties",
       "Security & Authentication",
       "Schema",
+      "ksqlDB",
     ]);
+  });
+
+  // The modal configures a connection; it does not use one. The cluster panel
+  // appends a Query workspace to this same list, and a half-written connection
+  // has nothing to query — so that tab must not appear here.
+  it("does not offer the cluster panel's Query workspace", () => {
+    renderWithClient(<ConnectionModal onAdd={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.queryByRole("tab", { name: "Query" })).not.toBeInTheDocument();
   });
 
   it("switches to the Schema tab when clicked", async () => {

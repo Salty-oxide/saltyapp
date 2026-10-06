@@ -1,4 +1,4 @@
-import { Connection, KAFKA_VERSIONS, NewConnection, SaslMechanism, SecurityProtocol } from "../../../lib/tauri";
+import { Connection, isKRaftOnly, KAFKA_VERSIONS, NewConnection, SaslMechanism, SecurityProtocol } from "../../../lib/tauri";
 
 /**
  * Editable form state for the New Connection modal. Every field is a plain
@@ -20,6 +20,8 @@ export interface ConnectionDraft {
   saslOauthUrl: string;
   schemaRegistryEndpoint: string;
   schemaRegistryBasicAuthCredentials: string;
+  ksqldbEndpoint: string;
+  ksqldbBasicAuthCredentials: string;
   schemaRegistryTrustStoreLocation: string;
   schemaRegistryTrustStorePassword: string;
   schemaRegistryKeystoreLocation: string;
@@ -55,6 +57,8 @@ export function emptyDraft(): ConnectionDraft {
     saslOauthUrl: "",
     schemaRegistryEndpoint: "",
     schemaRegistryBasicAuthCredentials: "",
+    ksqldbEndpoint: "",
+    ksqldbBasicAuthCredentials: "",
     schemaRegistryTrustStoreLocation: "",
     schemaRegistryTrustStorePassword: "",
     schemaRegistryKeystoreLocation: "",
@@ -69,10 +73,23 @@ export function emptyDraft(): ConnectionDraft {
   };
 }
 
+/**
+ * Whether this draft's ZooKeeper settings apply at all — enabled *and* on a
+ * version that can still run ZooKeeper.
+ *
+ * One function rather than the same two-term condition written out in
+ * `validateDraft` and `toNewConnection`, because those two must agree: if
+ * validation demands a host that the wire conversion then discards, a user
+ * is blocked on a field that was never going to be saved.
+ */
+function zookeeperUsable(draft: ConnectionDraft): boolean {
+  return draft.zookeeperEnabled && !isKRaftOnly(draft.kafkaVersion);
+}
+
 export function validateDraft(draft: ConnectionDraft): string | null {
   if (draft.name.trim().length === 0) return "Cluster name is required";
   if (draft.bootstrapServers.trim().length === 0) return "Bootstrap servers is required";
-  if (draft.zookeeperEnabled) {
+  if (zookeeperUsable(draft)) {
     if (draft.zookeeperHost.trim().length === 0) {
       return "Zookeeper host is required when Zookeeper is enabled";
     }
@@ -89,18 +106,23 @@ function nullableTrim(value: string): string | null {
 }
 
 export function toNewConnection(draft: ConnectionDraft): NewConnection {
-  const zookeeperHost = draft.zookeeperEnabled ? nullableTrim(draft.zookeeperHost) : null;
+  // Kafka 4.0 removed ZooKeeper, so a 4.x connection must never persist
+  // ZooKeeper settings: the section is hidden at that point, and a stored
+  // `zookeeperEnabled: true` would make the row — and the file
+  // `connections_export` writes from it — claim something no 4.x cluster
+  // can be doing. The draft itself is left alone, so switching 4.1 -> 3.9
+  // inside one modal session brings a typed host back.
+  const zookeeperIsUsable = zookeeperUsable(draft);
+  const zookeeperHost = zookeeperIsUsable ? nullableTrim(draft.zookeeperHost) : null;
   const zookeeperPort =
-    draft.zookeeperEnabled && draft.zookeeperPort.trim().length > 0
-      ? Number(draft.zookeeperPort)
-      : null;
-  const zookeeperChrootPath = draft.zookeeperEnabled ? nullableTrim(draft.zookeeperChrootPath) : null;
+    zookeeperIsUsable && draft.zookeeperPort.trim().length > 0 ? Number(draft.zookeeperPort) : null;
+  const zookeeperChrootPath = zookeeperIsUsable ? nullableTrim(draft.zookeeperChrootPath) : null;
 
   return {
     name: draft.name.trim(),
     bootstrapServers: draft.bootstrapServers.trim(),
     kafkaVersion: draft.kafkaVersion,
-    zookeeperEnabled: draft.zookeeperEnabled,
+    zookeeperEnabled: zookeeperIsUsable,
     zookeeperHost,
     zookeeperPort,
     zookeeperChrootPath,
@@ -111,6 +133,8 @@ export function toNewConnection(draft: ConnectionDraft): NewConnection {
     saslOauthUrl: nullableTrim(draft.saslOauthUrl),
     schemaRegistryEndpoint: nullableTrim(draft.schemaRegistryEndpoint),
     schemaRegistryBasicAuthCredentials: nullableTrim(draft.schemaRegistryBasicAuthCredentials),
+    ksqldbEndpoint: nullableTrim(draft.ksqldbEndpoint),
+    ksqldbBasicAuthCredentials: nullableTrim(draft.ksqldbBasicAuthCredentials),
     schemaRegistryTrustStoreLocation: nullableTrim(draft.schemaRegistryTrustStoreLocation),
     schemaRegistryTrustStorePassword: nullableTrim(draft.schemaRegistryTrustStorePassword),
     schemaRegistryKeystoreLocation: nullableTrim(draft.schemaRegistryKeystoreLocation),
@@ -146,6 +170,8 @@ export function connectionToDraft(connection: Connection): ConnectionDraft {
     saslPassword: connection.saslPassword ?? "",
     saslOauthUrl: connection.saslOauthUrl ?? "",
     schemaRegistryEndpoint: connection.schemaRegistryEndpoint ?? "",
+    ksqldbEndpoint: connection.ksqldbEndpoint ?? "",
+    ksqldbBasicAuthCredentials: connection.ksqldbBasicAuthCredentials ?? "",
     schemaRegistryBasicAuthCredentials: connection.schemaRegistryBasicAuthCredentials ?? "",
     schemaRegistryTrustStoreLocation: connection.schemaRegistryTrustStoreLocation ?? "",
     schemaRegistryTrustStorePassword: connection.schemaRegistryTrustStorePassword ?? "",

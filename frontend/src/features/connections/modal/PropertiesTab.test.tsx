@@ -2,12 +2,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { setInvokeHandlers } from "../../../lib/testInvoke";
 import { emptyDraft } from "./draft";
 import { PropertiesTab } from "./PropertiesTab";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 function renderWithClient(ui: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -25,19 +26,45 @@ describe("PropertiesTab", () => {
 
     expect(screen.getByLabelText("Cluster name")).toBeInTheDocument();
     expect(screen.getByLabelText("Bootstrap servers")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /3\.7/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /4\.3/ })).toBeInTheDocument();
   });
 
-  it("lists 0.11 through 3.7 as kafka version options", async () => {
+  it("lists 0.11 through 4.3 as kafka version options", async () => {
     const user = userEvent.setup();
     renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: /3\.7/ }));
+    await user.click(screen.getByRole("button", { name: /4\.3/ }));
 
     expect(screen.getByRole("option", { name: "0.11" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "2.9" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "3.0" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "✓ 3.7" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "3.8" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "3.9" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "4.0" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "✓ 4.3" })).toBeInTheDocument();
+  });
+
+  it("does not offer 2.9, which Kafka never released", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: /4\.3/ }));
+
+    expect(screen.queryByRole("option", { name: "2.9" })).not.toBeInTheDocument();
+  });
+
+  it("still displays a stored version the list no longer offers", async () => {
+    // Dropdown falls back to options[0] for an unknown displayedId, so
+    // without appending this the row would render as 0.11 while the DB
+    // still said 2.9 — and Update would stay disabled, because the draft
+    // never changed. Appending keeps the display honest.
+    const user = userEvent.setup();
+    const draft = { ...emptyDraft(), kafkaVersion: "2.9" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /2\.9/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /2\.9/ }));
+    expect(screen.getByRole("option", { name: "✓ 2.9" })).toBeInTheDocument();
   });
 
   it("calls onChange when the cluster name is typed", async () => {
@@ -50,8 +77,27 @@ describe("PropertiesTab", () => {
     expect(onChange).toHaveBeenCalledWith({ name: "L" });
   });
 
+  it("replaces the zookeeper section with the KRaft notice on 4.x", () => {
+    const draft = { ...emptyDraft(), kafkaVersion: "4.1", zookeeperEnabled: true };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.queryByLabelText("Enable Zookeeper")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Zookeeper host")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "KRaft" })).toBeInTheDocument();
+  });
+
+  it("keeps the zookeeper section on 3.9, the last version that can run it", () => {
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
+
+    expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
+    expect(screen.getByLabelText("Zookeeper host")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "KRaft" })).not.toBeInTheDocument();
+  });
+
   it("does not show zookeeper host/port/chroot fields until zookeeper is enabled", () => {
-    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
     expect(screen.queryByLabelText("Zookeeper host")).not.toBeInTheDocument();
@@ -60,7 +106,7 @@ describe("PropertiesTab", () => {
   });
 
   it("shows zookeeper host/port/chroot fields once zookeeper is enabled", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true };
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     expect(screen.getByLabelText("Zookeeper host")).toBeInTheDocument();
@@ -98,7 +144,13 @@ describe("PropertiesTab", () => {
   it("pings zookeeper and shows a success message", async () => {
     setInvokeHandlers({ connection_ping_zookeeper: () => "REACHABLE" });
     const user = userEvent.setup();
-    const draft = { ...emptyDraft(), zookeeperEnabled: true, zookeeperHost: "zk.local", zookeeperPort: "2181" };
+    const draft = {
+      ...emptyDraft(),
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.local",
+      zookeeperPort: "2181",
+    };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Ping zookeeper" }));
@@ -107,24 +159,46 @@ describe("PropertiesTab", () => {
   });
 
   it("disables the zookeeper ping button until both host and port are filled in", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true };
+    const draft = { ...emptyDraft(), kafkaVersion: "3.9", zookeeperEnabled: true };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Ping zookeeper" })).toBeDisabled();
   });
 
   it("keeps cluster name editable but disables every other field when disabled is true", () => {
-    const draft = { ...emptyDraft(), zookeeperEnabled: true, zookeeperHost: "zk.local", zookeeperPort: "2181" };
+    const draft = {
+      ...emptyDraft(),
+      kafkaVersion: "3.9",
+      zookeeperEnabled: true,
+      zookeeperHost: "zk.local",
+      zookeeperPort: "2181",
+    };
     renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} disabled />);
 
     expect(screen.getByLabelText("Cluster name")).toBeEnabled();
     expect(screen.getByLabelText("Bootstrap servers")).toBeDisabled();
-    expect(screen.getByRole("button", { name: /3\.7/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /3\.9/ })).toBeDisabled();
     expect(screen.getByLabelText("Enable Zookeeper")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper host")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper port")).toBeDisabled();
     expect(screen.getByLabelText("Zookeeper chroot path")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Ping bootstrap servers" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Ping zookeeper" })).toBeDisabled();
+  });
+
+  it("still disables identity fields on 4.x, but leaves the KRaft link usable", () => {
+    // The KRaft notice deliberately sits outside the `disabled` fieldset the
+    // ZooKeeper section lived in: `disabled` locks connection *identity*
+    // while a cluster is connected, and this notice reads no draft state and
+    // only opens a documentation URL. Same reasoning as the Publishing
+    // checkbox. Without this test, nesting it back inside that fieldset
+    // would break nothing.
+    const draft = { ...emptyDraft(), kafkaVersion: "4.1" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={vi.fn()} disabled />);
+
+    expect(screen.getByLabelText("Cluster name")).toBeEnabled();
+    expect(screen.getByLabelText("Bootstrap servers")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /4\.1/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Learn more about KRaft" })).toBeEnabled();
   });
 
   describe("Publishing", () => {
@@ -172,5 +246,152 @@ describe("PropertiesTab", () => {
         screen.getByLabelText("Allow publishing messages to this cluster"),
       ).toBeEnabled();
     });
+  });
+
+  it("detects the cluster version and applies it to the dropdown", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: "derived from inter.broker.protocol.version",
+      }),
+    });
+    const draft = { ...emptyDraft(), bootstrapServers: "localhost:9092", kafkaVersion: "3.7" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={onChange} />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ kafkaVersion: "4.1" }));
+    expect(await screen.findByText("KRaft mode")).toBeInTheDocument();
+  });
+
+  it("does not offer Detect before there are bootstrap servers to ask", () => {
+    renderWithClient(<PropertiesTab draft={emptyDraft()} onChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Detect cluster version" })).toBeDisabled();
+  });
+
+  it("leaves the version alone when the broker suggests none", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "unknown",
+        processRoles: null,
+        interBrokerProtocolVersion: null,
+        suggestedVersion: null,
+        note: "The broker returned neither config.",
+      }),
+    });
+    const draft = { ...emptyDraft(), bootstrapServers: "localhost:9092" };
+    renderWithClient(<PropertiesTab draft={draft} onChange={onChange} />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    expect(await screen.findByText("Mode could not be determined")).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("stops claiming zookeeper is hidden once the version is moved back", async () => {
+    // Detect sets the "hidden" note when it crosses into KRaft-only
+    // territory, but it is never recomputed afterwards. Without gating the
+    // note on the *current* version, reverting to 3.9 brings the ZooKeeper
+    // fields back while the note above them still says they are hidden — a
+    // UI that contradicts itself a few pixels apart.
+    //
+    // This needs a *stateful* parent: PropertiesTab is controlled, so with a
+    // stub onChange the draft never moves and Detect's own applied version
+    // never lands either.
+    function Harness() {
+      const [draft, setDraft] = useState({
+        ...emptyDraft(),
+        bootstrapServers: "localhost:9092",
+        kafkaVersion: "3.9",
+      });
+      return (
+        <>
+          <PropertiesTab draft={draft} onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))} />
+          <button type="button" onClick={() => setDraft((d) => ({ ...d, kafkaVersion: "3.9" }))}>
+            revert to 3.9
+          </button>
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: "derived from inter.broker.protocol.version",
+      }),
+    });
+    renderWithClient(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+    expect(await screen.findByText(/ZooKeeper settings are hidden/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Enable Zookeeper")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "revert to 3.9" }));
+
+    expect(screen.queryByText(/ZooKeeper settings are hidden/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Enable Zookeeper")).toBeInTheDocument();
+    // The rest of the detection result is still on screen — only the claim
+    // that stopped being true is gone.
+    expect(screen.getByText("KRaft mode")).toBeInTheDocument();
+  });
+
+  it("drops the zookeeper note when a later detect reports nothing", async () => {
+    // `hidZookeeper` is recomputed on every successful detect, not only when
+    // one carries a suggestion. Without that, the second detect below leaves
+    // the first one's note standing — so the panel would read "Mode could
+    // not be determined" and "this broker reports KRaft" at the same time.
+    function Harness() {
+      const [draft, setDraft] = useState({
+        ...emptyDraft(),
+        bootstrapServers: "localhost:9092",
+        kafkaVersion: "3.9",
+      });
+      return (
+        <PropertiesTab draft={draft} onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))} />
+      );
+    }
+
+    const user = userEvent.setup();
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "kraft",
+        processRoles: "broker,controller",
+        interBrokerProtocolVersion: "4.1-IV0",
+        suggestedVersion: "4.1",
+        note: null,
+      }),
+    });
+    renderWithClient(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+    expect(await screen.findByText(/ZooKeeper settings are hidden/)).toBeInTheDocument();
+
+    // Now the same cluster refuses DescribeConfigs — no mode, no suggestion.
+    setInvokeHandlers({
+      connection_detect_version: () => ({
+        mode: "unknown",
+        processRoles: null,
+        interBrokerProtocolVersion: null,
+        suggestedVersion: null,
+        note: "The broker returned neither config.",
+      }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Detect cluster version" }));
+
+    expect(await screen.findByText("Mode could not be determined")).toBeInTheDocument();
+    expect(screen.queryByText(/ZooKeeper settings are hidden/)).not.toBeInTheDocument();
   });
 });

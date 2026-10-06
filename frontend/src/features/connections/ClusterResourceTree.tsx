@@ -1,9 +1,13 @@
+import { useMemo } from "react";
 import { BrokerSummary, ConsumerGroupSummary } from "../../lib/tauri";
+import { AclAvailabilityNotice } from "./AclAvailabilityNotice";
+import { bindingCountsByPrincipal, distinctPrincipals, orderPrincipals, selfPrincipal } from "./acl";
+import { useConnectionsQuery } from "./useConnections";
 import { useTabsStore } from "../tabs/useTabsStore";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { ResourceCategory } from "./ResourceCategory";
 import { TopicCategory } from "./TopicCategory";
-import { useBrokers, useConsumerGroups, useTopics } from "./useClusterResources";
+import { useAcls, useBrokers, useConsumerGroups, useTopics } from "./useClusterResources";
 import { treeKey, useTreeUiStore } from "./useTreeUiStore";
 
 /** A group in this state currently has no members, and so no active partition assignment — see the "hide empty consumer groups" context menu item below. */
@@ -30,9 +34,15 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   // and surfacing that failure, on every connect for a category the user may
   // never open is work nobody asked for.
   const consumersExpanded = useTreeUiStore((s) => s.expanded[consumersTreeKey] ?? false);
+  // Access Control is lazy for exactly the same reason as Consumers: listing
+  // ACLs needs `Describe` on the `Cluster` resource, which a principal with
+  // full read access to every topic is routinely not granted.
+  const aclsTreeKey = treeKey(activeTabId, connectionId, "Access Control");
+  const aclsExpanded = useTreeUiStore((s) => s.expanded[aclsTreeKey] ?? false);
   const brokers = useBrokers(connectionId, true);
   const topics = useTopics(connectionId, true);
   const groups = useConsumerGroups(connectionId, consumersExpanded);
+  const acls = useAcls(connectionId, aclsExpanded);
   // Each listing is fetched once and then held indefinitely (see
   // `CLUSTER_LISTING_OPTIONS`), so opening a category is how the user asks
   // for a fresh one. Wrapped to drop `refetch`'s return value, which
@@ -45,6 +55,10 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   const refetchGroups = () => {
     if (consumersExpanded || groups.data !== undefined) void groups.refetch();
   };
+  // Same first-open rule as Consumers — see `refetchGroups`.
+  const refetchAcls = () => {
+    if (aclsExpanded || acls.data !== undefined) void acls.refetch();
+  };
   const hideEmptyGroups = useTreeUiStore((s) => s.hideEmptyConsumerGroups[consumersTreeKey] ?? false);
   const toggleHideEmptyConsumerGroups = useTreeUiStore((s) => s.toggleHideEmptyConsumerGroups);
 
@@ -52,6 +66,19 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   const selectBroker = useWorkspaceSelectionStore((s) => s.selectBroker);
   const selectTopic = useWorkspaceSelectionStore((s) => s.selectTopic);
   const selectConsumerGroup = useWorkspaceSelectionStore((s) => s.selectConsumerGroup);
+  const selectPrincipal = useWorkspaceSelectionStore((s) => s.selectPrincipal);
+
+  const { data: connections } = useConnectionsQuery();
+  const connection = connections?.find((c) => c.id === connectionId);
+  // `null` when the principal cannot be known (mTLS, Kerberos) — the "You"
+  // row is then simply absent rather than guessed at. See `selfPrincipal`.
+  const self = selfPrincipal(connection);
+  const bindings = acls.data?.bindings;
+  const principals = useMemo(
+    () => orderPrincipals(distinctPrincipals(bindings ?? []), self),
+    [bindings, self],
+  );
+  const bindingCounts = useMemo(() => bindingCountsByPrincipal(bindings ?? []), [bindings]);
 
   return (
     <ul className="resource-tree" data-testid={`resource-tree-${connectionId}`}>
@@ -110,6 +137,39 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
             onSelect: () => toggleHideEmptyConsumerGroups(consumersTreeKey),
           },
         ]}
+      />
+      <ResourceCategory<string>
+        label="Access Control"
+        items={acls.data ? principals : undefined}
+        isLoading={acls.isLoading}
+        error={acls.error}
+        onExpand={refetchAcls}
+        treeKey={aclsTreeKey}
+        getKey={(principal) => principal}
+        getLabel={(principal) => {
+          const count = bindingCounts.get(principal) ?? 0;
+          const name = principal === self ? `You (${principal})` : principal;
+          return `${name} — ${count}`;
+        }}
+        matchesSearch={(principal, query) => principal.toLowerCase().includes(query.toLowerCase())}
+        isSelected={(principal) =>
+          selection?.type === "principal" &&
+          selection.connectionId === connectionId &&
+          selection.principal === principal
+        }
+        onSelect={(principal) => selectPrincipal(connectionId, principal)}
+        // An empty ACL list means opposite things on an unsecured cluster and
+        // on one that denies by default, so the category always says which —
+        // through `notice` rather than `error`, since neither case is a
+        // failure of the call.
+        notice={
+          acls.data ? (
+            <AclAvailabilityNotice
+              availability={acls.data.availability}
+              isEmpty={acls.data.bindings.length === 0}
+            />
+          ) : undefined
+        }
       />
     </ul>
   );

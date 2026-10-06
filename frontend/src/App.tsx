@@ -19,6 +19,7 @@ import { PartitionDetailPanel } from "./features/connections/PartitionDetailPane
 import { ExportIcon, ImportIcon, PlusIcon } from "./components/AppIcons";
 import { MessagePayloadViewer } from "./features/connections/MessagePayloadViewer";
 import { ConsumerGroupDetailPanel } from "./features/connections/ConsumerGroupDetailPanel";
+import { PrincipalDetailPanel } from "./features/connections/PrincipalDetailPanel";
 import { useCreateConnection, useExportConnections, useImportConnections } from "./features/connections/useConnections";
 import { BottomPanel } from "./features/bottom-panel/BottomPanel";
 import { ResizableShell } from "./features/layout/ResizableShell";
@@ -270,6 +271,13 @@ function AppShell() {
                         key={`${selection.connectionId}-${selection.groupId}`}
                         connectionId={selection.connectionId}
                         groupId={selection.groupId}
+                      />
+                    )}
+                    {selection?.type === "principal" && (
+                      <PrincipalDetailPanel
+                        key={`${selection.connectionId}-${selection.principal}`}
+                        connectionId={selection.connectionId}
+                        principal={selection.principal}
                       />
                     )}
                     {!selection && <p className="app-main-placeholder">Select a cluster, broker, or topic.</p>}

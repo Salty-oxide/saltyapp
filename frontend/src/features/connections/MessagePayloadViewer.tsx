@@ -680,6 +680,11 @@ export function MessagePayloadViewer() {
                     <LineNumberedText
                       text={literal.text}
                       ariaLabel={`Payload as ${valueFormat(mode).label}`}
+                      // Raw and Hex render a capped preview, so find can only
+                      // see the part that is on screen. Saying so is the
+                      // difference between "no matches here" and the flat
+                      // "No results", which would be untrue of the payload.
+                      findScopeNote={literal.truncated ? "in the shown preview" : undefined}
                       // The hex dump only: its offset/byte/ASCII grid is
                       // the view, and in a proportional font the three
                       // columns stop lining up at all.

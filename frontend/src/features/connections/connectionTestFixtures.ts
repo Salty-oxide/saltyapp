@@ -17,6 +17,8 @@ export function sampleNewConnection(overrides: Partial<NewConnection> = {}): New
     saslOauthUrl: null,
     schemaRegistryEndpoint: null,
     schemaRegistryBasicAuthCredentials: null,
+    ksqldbEndpoint: null,
+    ksqldbBasicAuthCredentials: null,
     schemaRegistryTrustStoreLocation: null,
     schemaRegistryTrustStorePassword: null,
     schemaRegistryKeystoreLocation: null,

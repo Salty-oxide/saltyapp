@@ -6,6 +6,7 @@ import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionSt
 import { clearConnectionState } from "./clearConnectionState";
 import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
+import { useKsqlStore, ksqlWorkspaceKey } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
 import { emptyFilterForm } from "./dataFilters";
 import { emptyMessage } from "./publishMessages";
@@ -69,8 +70,32 @@ function seedState() {
   });
   useDataTabGridStateStore.setState({
     stateByTab: {
-      [`tab-1:${GONE}:orders:all`]: { sortModel: [], filterModel: {}, searchText: "x" },
-      [`tab-1:${KEPT}:ships:all`]: { sortModel: [], filterModel: {}, searchText: "y" },
+      [`tab-1:${GONE}:orders:all`]: { sortModel: [{ colId: "offset", sort: "desc" as const }], filterModel: {} },
+      [`tab-1:${KEPT}:ships:all`]: { sortModel: [{ colId: "offset", sort: "asc" as const }], filterModel: {} },
+    },
+  });
+  useKsqlStore.setState({
+    byKey: {
+      [ksqlWorkspaceKey("tab-1", GONE, "cluster")]: {
+        sql: "SELECT 1;",
+        status: "idle",
+        columns: [],
+        rows: [],
+        received: 0,
+        nextIndex: 0,
+        requestId: null,
+        error: null,
+      },
+      [ksqlWorkspaceKey("tab-1", KEPT, "cluster")]: {
+        sql: "SELECT 2;",
+        status: "idle",
+        columns: [],
+        rows: [],
+        received: 0,
+        nextIndex: 0,
+        requestId: null,
+        error: null,
+      },
     },
   });
   usePublishDraftStore.setState({
@@ -143,6 +168,19 @@ describe("clearConnectionState", () => {
     expect(useTabDataStore.getState().payloadBytesByTab).toEqual({ [`tab-1:${KEPT}:ships:all`]: 99 });
     expect(Object.keys(useDataTabFiltersStore.getState().formByTab)).toEqual([`tab-1:${KEPT}:ships:all`]);
     expect(Object.keys(useDataTabGridStateStore.getState().stateByTab)).toEqual([`tab-1:${KEPT}:ships:all`]);
+  });
+
+  // The ksqlDB workspace holds the editor's text and whatever rows a query
+  // left behind, both of which describe a cluster the app has stopped talking
+  // to.
+  it("forgets the disconnected connection's ksqlDB workspaces and keeps the others", () => {
+    seedState();
+
+    clearConnectionState(queryClient, GONE);
+
+    expect(Object.keys(useKsqlStore.getState().byKey)).toEqual([
+      ksqlWorkspaceKey("tab-1", KEPT, "cluster"),
+    ]);
   });
 
   it("drops the cluster's unsent publish drafts, in every tab, and keeps other clusters'", () => {

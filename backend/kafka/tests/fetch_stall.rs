@@ -24,7 +24,7 @@
 //! ```
 
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
@@ -60,6 +60,8 @@ fn connection(bootstrap_servers: String) -> Connection {
         sasl_password: None,
         sasl_oauth_url: None,
         schema_registry_endpoint: None,
+        ksqldb_endpoint: None,
+        ksqldb_basic_auth_credentials: None,
         schema_registry_basic_auth_credentials: None,
         schema_registry_trust_store_location: None,
         schema_registry_trust_store_password: None,
@@ -105,6 +107,21 @@ fn filter(include_payload: bool) -> MessageFilter {
     }
 }
 
+/// Serialises the tests in this file, so that three wall-clock budgets are not
+/// measuring each other's load. The two large-fetch tests each pull 30,000 x
+/// 1 KB records, which is not a neighbour you want while timing a browse.
+///
+/// This is hygiene, not the fix for the flake that prompted it — see the
+/// warm-up in `repeated_small_browses_do_not_pay_a_coordinator_query_each`.
+/// Serialising alone took that test from failing ~40% of runs to ~10%, which
+/// was enough to show contention was aggravating the problem without being
+/// its cause.
+///
+/// A `tokio::sync::Mutex`, not a `std` one: these are `multi_thread` tests and
+/// the guard is held across `.await`, which a `std::sync::MutexGuard` cannot
+/// be (it is not `Send`).
+static BROKER: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 async fn fetch(include_payload: bool) -> Option<(Duration, usize)> {
     let bootstrap = bootstrap_servers()?;
     let client = RdKafkaClient::new();
@@ -128,6 +145,7 @@ async fn fetch(include_payload: bool) -> Option<(Duration, usize)> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_large_fetch_does_not_stall_on_the_prefetch_queue_backoff() {
+    let _serial = BROKER.lock().await;
     let Some((elapsed, count)) = fetch(false).await else {
         eprintln!("skipped: set SALTY_E2E_BOOTSTRAP (and run scripts/e2e-fixtures.sh)");
         return;
@@ -148,6 +166,7 @@ async fn a_large_fetch_does_not_stall_on_the_prefetch_queue_backoff() {
 /// too — otherwise a regression could hide in whichever mode is untested.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_same_holds_when_payloads_are_fetched() {
+    let _serial = BROKER.lock().await;
     let Some((elapsed, count)) = fetch(true).await else {
         eprintln!("skipped: set SALTY_E2E_BOOTSTRAP (and run scripts/e2e-fixtures.sh)");
         return;
@@ -177,6 +196,7 @@ async fn the_same_holds_when_payloads_are_fetched() {
 /// together could not: ~2,100 ms against the ~60 ms this budget allows.
 #[tokio::test(flavor = "multi_thread")]
 async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
+    let _serial = BROKER.lock().await;
     let Some(bootstrap) = bootstrap_servers() else {
         eprintln!("skipped: set SALTY_E2E_BOOTSTRAP (and run scripts/e2e-fixtures.sh)");
         return;
@@ -193,6 +213,38 @@ async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
         .list_topics(&connection, Duration::from_secs(30))
         .await
         .expect("list_topics failed");
+
+    // And one discarded browse, for the same reason one step further on.
+    //
+    // The *first* fetch in a process intermittently costs ~513 ms where every
+    // later one costs 7-9 ms — measured as `each=[513, 8, 18, 8, 23]`, and
+    // reproducibly on roughly 10-40% of runs depending on what else is
+    // touching the broker. That is a one-off group-coordinator lookup for the
+    // `group.id` `assign()` forces on a fetch consumer: a fresh consumer has
+    // no cached coordinator, and a FindCoordinator that needs a retry pays
+    // ~500 ms of `retry.backoff.ms` before it lands.
+    //
+    // Charging that to the measurement made this test fail for a cost the
+    // real app pays once per session, not once per browse. Excluding it costs
+    // the guard nothing: both regressions named in the assertion below are
+    // *per-browse* costs — ~500 ms if the partition list is asked of the fetch
+    // consumer, ~99 ms if the consumer is closed on the critical path — so
+    // they still show up across the five timed browses that follow. Four or
+    // five samples of the steady-state cost is what this test is about, and
+    // the warm-up is what makes them steady-state.
+    client
+        .fetch_messages(
+            &connection,
+            TOPIC,
+            &browse_filter(),
+            None,
+            Duration::from_secs(30),
+            1_048_576,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect("warm-up fetch failed");
 
     let started = Instant::now();
     let mut each = Vec::new();

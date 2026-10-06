@@ -74,6 +74,8 @@ fn connection_as(bootstrap_servers: String, username: &str, password: &str) -> C
         sasl_password: Some(password.into()),
         sasl_oauth_url: None,
         schema_registry_endpoint: None,
+        ksqldb_endpoint: None,
+        ksqldb_basic_auth_credentials: None,
         schema_registry_basic_auth_credentials: None,
         schema_registry_trust_store_location: None,
         schema_registry_trust_store_password: None,

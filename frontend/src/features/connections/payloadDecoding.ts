@@ -102,13 +102,10 @@ export function detectConfluentAvro(bytes: Uint8Array): ConfluentAvroInfo | null
  * A grid cell shows a single line, so decoding a whole message to render one
  * is wasted work — and on a topic of multi-megabyte JSON it is the work that
  * makes the grid unusable. Measured over 300 rows of 2 MB payloads: decoding
- * every row in full costs ~1.35s, and AG Grid's quick-filter cache then
- * retains ~600 MB of lowercased copies of them, against ~1ms and no
- * measurable retention for a bounded preview.
+ * every row in full costs ~1.35s, against ~1ms for a bounded preview.
  *
  * 4 KB is far more than any cell can display, and generous enough that the
- * search box still matches the identifying fields at the top of a typical
- * JSON document.
+ * identifying fields at the top of a typical JSON document are in it.
  */
 export const VALUE_PREVIEW_BYTES = 4096;
 
@@ -212,47 +209,6 @@ export function retainedRowBytes(messages: TopicMessage[]): number {
 }
 
 /**
- * How many payload bytes [`decodeValuePreview`] actually decodes.
- *
- * It cuts the base64 on a 4-character boundary, and 4 base64 characters
- * carry 3 bytes, so the real preview rounds [`VALUE_PREVIEW_BYTES`] up to
- * the next whole group. Comparing against the nominal 4096 instead reported
- * a 4,097-byte message as partially searched when the search had in fact
- * read all of it.
- */
-export const VALUE_PREVIEW_DECODED_BYTES = Math.ceil(VALUE_PREVIEW_BYTES / 3) * 3;
-
-/**
- * Whether the search box reads only part of this row's value.
- *
- * Two things have to be true, and checking only the second was the bug:
- *
- * 1. **The row carries a payload at all.** With "Fetch message payload"
- *    unchecked the backend sends every row's real `payloadSizeBytes` but no
- *    bytes — deliberately, so the grid can report each message's size. A
- *    size-only test therefore fired on every large message of a browse that
- *    had fetched nothing, announcing that search was reading the first 4 KB
- *    of values that were not there: the Value column was blank, and the
- *    search had nothing to match on for any row, large or small.
- *
- * 2. **The value is longer than the preview.** Against
- *    [`VALUE_PREVIEW_DECODED_BYTES`], what the preview really decodes,
- *    rather than the nominal bound it rounds up from.
- *
- * Takes the size the backend reported rather than measuring the base64 it
- * sent: the backend truncates payloads for transport, so a message cut to
- * exactly that bound is indistinguishable from one genuinely that long, and
- * measuring the base64 would call every large message fully searched.
- */
-export function searchSeesPartialValue(
-  message: Pick<TopicMessage, "payloadBase64" | "payloadSizeBytes">,
-): boolean {
-  if (message.payloadBase64 === null) return false;
-  if (message.payloadSizeBytes === null) return false;
-  return message.payloadSizeBytes > VALUE_PREVIEW_DECODED_BYTES;
-}
-
-/**
  * A payload's size, in the unit that makes it readable — bytes under a
  * kilobyte, then KB, then MB.
  *
@@ -290,9 +246,9 @@ export function isPayloadTruncated(payloadBase64: string | null, payloadSizeByte
  * The most of any one payload a grid fetch carries back.
  *
  * Deliberately not [`VALUE_PREVIEW_BYTES`], which the two used to share.
- * That constant is sized for what a *grid cell* decodes and what the search
- * box reads — 4 KB, ample for both — and using it as the transport bound too
- * meant every row of any ordinary JSON or Avro topic arrived truncated. The
+ * That constant is sized for what a *grid cell* decodes — 4 KB, ample for
+ * one line — and using it as the transport bound too meant every row of any
+ * ordinary JSON or Avro topic arrived truncated. The
  * payload viewer then had nothing whole to show, so opening a message went
  * back to the broker for its real bytes: a fresh consumer, a TLS and SASL
  * handshake, metadata and watermarks, on every single click. Carrying more

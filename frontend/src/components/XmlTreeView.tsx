@@ -1,5 +1,15 @@
-import { useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { formatXmlNode, XmlElementNode } from "../features/connections/payloadDecoding";
+import { FindBar } from "./FindBar";
+import {
+  attributesSuffix,
+  flattenXmlTree,
+  NO_XML_OVERRIDES,
+  XmlLine,
+  xmlLineSearchText,
+  XmlTreeOverrides,
+} from "./xmlTreeLines";
+import { useFind } from "./useFind";
 
 export interface XmlTreeViewProps {
   value: XmlElementNode;
@@ -37,67 +47,68 @@ function ExternalLinkIcon() {
   );
 }
 
-function attributesSuffix(attributes: [string, string][]): string {
-  if (attributes.length === 0) return "";
-  return " " + attributes.map(([key, value]) => `${key}="${value}"`).join(" ");
+interface XmlRowProps {
+  line: XmlLine;
+  index: number;
+  isMatch: boolean;
+  isCurrent: boolean;
+  onToggle: (path: string) => void;
 }
 
-interface XmlNodeProps {
-  node: XmlElementNode;
-  depth: number;
-}
-
-function XmlNode({ node, depth }: XmlNodeProps) {
-  const [expanded, setExpanded] = useState(true);
-  const indent = { paddingLeft: `${depth * 14}px` };
-  const openTag = `<${node.tag}${attributesSuffix(node.attributes)}>`;
-
-  if (node.children.length === 0) {
-    return (
-      <div className="json-tree-line">
-        <span className="json-tree-line-content" style={indent}>
-          <span className="json-tree-indent" aria-hidden="true" />
-          <span className="json-tree-key">{openTag}</span>
-          {node.text !== null && <span className="json-tree-value json-tree-value--string">{node.text}</span>}
-          <span className="json-tree-key">{`</${node.tag}>`}</span>
-        </span>
-      </div>
-    );
-  }
+/**
+ * One rendered row.
+ *
+ * Expansion state no longer lives here. It was `useState` per node, which
+ * made it impossible to know what the document currently looks like from
+ * outside — and a find bar has to know, because a match inside a collapsed
+ * subtree is not on screen. It is lifted to the view and keyed by path; see
+ * `flattenXmlTree`.
+ */
+function XmlRow({ line, index, isMatch, isCurrent, onToggle }: XmlRowProps) {
+  const indent = { paddingLeft: `${line.depth * 14}px` };
+  const openTag = `<${line.tag}${attributesSuffix(line.attributes)}>`;
+  // Two levels of highlight: "matches" and "you are here" are different
+  // questions, and without the second, Enter looks like it did nothing on a
+  // screen where every row matches.
+  const matchClass = isCurrent ? " json-tree-line--match-current" : isMatch ? " json-tree-line--match" : "";
 
   return (
-    <div>
-      <div className="json-tree-line">
-        <span className="json-tree-line-content" style={indent}>
+    // No line-number element: this tree is not virtualized, so every row is
+    // in the DOM and the `.json-tree-line` CSS counter numbers them correctly
+    // — which is exactly why that counter is still scoped to
+    // `:not(.json-tree-body--virtual)`. Rendering a number here too would
+    // print it twice.
+    <div className={`json-tree-line${matchClass}`} data-testid={`xml-line-${index}`}>
+      <span className="json-tree-line-content" style={indent}>
+        {line.kind === "open" ? (
           <button
             type="button"
-            className={`tree-caret-button${expanded ? " tree-caret-button--expanded" : ""}`}
-            aria-label={expanded ? `Collapse ${node.tag}` : `Expand ${node.tag}`}
-            onClick={() => setExpanded((current) => !current)}
+            className={`tree-caret-button${line.expanded ? " tree-caret-button--expanded" : ""}`}
+            aria-label={line.expanded ? `Collapse ${line.tag}` : `Expand ${line.tag}`}
+            onClick={() => onToggle(line.path)}
           >
             <span className="tree-caret" aria-hidden="true" />
           </button>
-          <span className="json-tree-key">{openTag}</span>
-          {!expanded && (
-            <span className="json-tree-summary">
-              {node.children.length} {node.children.length === 1 ? "child" : "children"}
-            </span>
-          )}
-        </span>
-      </div>
-      {expanded && (
-        <>
-          {node.children.map((child, index) => (
-            <XmlNode key={index} node={child} depth={depth + 1} />
-          ))}
-          <div className="json-tree-line">
-            <span className="json-tree-line-content" style={indent}>
-              <span className="json-tree-indent" aria-hidden="true" />
-              <span className="json-tree-key">{`</${node.tag}>`}</span>
-            </span>
-          </div>
-        </>
-      )}
+        ) : (
+          <span className="json-tree-indent" aria-hidden="true" />
+        )}
+        {line.kind === "close" ? (
+          <span className="json-tree-key">{`</${line.tag}>`}</span>
+        ) : (
+          <>
+            <span className="json-tree-key">{openTag}</span>
+            {line.kind === "leaf" && line.text !== null && (
+              <span className="json-tree-value json-tree-value--string">{line.text}</span>
+            )}
+            {line.kind === "leaf" && <span className="json-tree-key">{`</${line.tag}>`}</span>}
+            {line.kind === "open" && !line.expanded && (
+              <span className="json-tree-summary">
+                {line.childCount} {line.childCount === 1 ? "child" : "children"}
+              </span>
+            )}
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -109,6 +120,32 @@ function XmlNode({ node, depth }: XmlNodeProps) {
  */
 export function XmlTreeView({ value, onOpenInNewTab, lineNumbers = false, showToolbar = true }: XmlTreeViewProps) {
   const [copied, setCopied] = useState(false);
+  const [overrides, setOverrides] = useState<XmlTreeOverrides>(NO_XML_OVERRIDES);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const lines = useMemo(() => flattenXmlTree(value, overrides), [value, overrides]);
+  const findUnits = useMemo(() => lines.map(xmlLineSearchText), [lines]);
+
+  const onToggle = useCallback((path: string) => {
+    setOverrides((current) => {
+      const next = new Map(current);
+      next.set(path, !(current.get(path) ?? true));
+      return next;
+    });
+  }, []);
+
+  // Not virtualized, so every visible row is a real element and scrolling to
+  // one is just asking it to come into view. Matches inside a *collapsed*
+  // subtree are still counted — they are in the model — but there is no row
+  // to scroll to until the reader opens it.
+  const reveal = useCallback((index: number) => {
+    const row = bodyRef.current?.querySelector(`[data-testid="xml-line-${index}"]`);
+    // Optional-called: jsdom does not implement `scrollIntoView`, and a
+    // missing scroll must never break the search that asked for it.
+    row?.scrollIntoView?.({ block: "center" });
+  }, []);
+  const find = useFind(findUnits, reveal);
+  const matched = useMemo(() => new Set(find.matches), [find.matches]);
 
   async function handleCopy() {
     await navigator.clipboard.writeText(formatXmlNode(value));
@@ -117,7 +154,7 @@ export function XmlTreeView({ value, onOpenInNewTab, lineNumbers = false, showTo
   }
 
   return (
-    <div className="json-tree">
+    <div className="json-tree" ref={find.containerRef}>
       {showToolbar && (
       <div className="json-tree-toolbar">
         {onOpenInNewTab && (
@@ -142,8 +179,22 @@ export function XmlTreeView({ value, onOpenInNewTab, lineNumbers = false, showTo
         </button>
       </div>
       )}
-      <div className={`json-tree-body${lineNumbers ? " json-tree-body--numbered" : ""}`} role="tree">
-        <XmlNode node={value} depth={0} />
+      <FindBar find={find} />
+      <div
+        ref={bodyRef}
+        className={`json-tree-body${lineNumbers ? " json-tree-body--numbered" : ""}`}
+        role="tree"
+      >
+        {lines.map((line, index) => (
+          <XmlRow
+            key={`${line.path}:${line.kind}`}
+            line={line}
+            index={index}
+            isMatch={matched.has(index)}
+            isCurrent={index === find.activeUnit}
+            onToggle={onToggle}
+          />
+        ))}
       </div>
     </div>
   );

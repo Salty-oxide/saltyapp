@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { XmlTreeView } from "./XmlTreeView";
 import { tryParseXml, XmlElementNode } from "../features/connections/payloadDecoding";
@@ -104,5 +104,101 @@ describe("XmlTreeView line numbers and toolbar", () => {
     const { container } = render(<XmlTreeView value={node} onOpenInNewTab={() => {}} showToolbar={false} />);
 
     expect(container.querySelector(".json-tree-toolbar")).toBeNull();
+  });
+});
+
+describe("find in an XML document (Ctrl+F)", () => {
+  const tree = {
+    tag: "orders",
+    attributes: [] as [string, string][],
+    text: null,
+    children: [
+      { tag: "order", attributes: [["status", "shipped"]] as [string, string][], text: null, children: [
+        { tag: "id", attributes: [] as [string, string][], text: "ORDER-42", children: [] },
+      ] },
+      { tag: "order", attributes: [["status", "pending"]] as [string, string][], text: null, children: [
+        { tag: "id", attributes: [] as [string, string][], text: "ORDER-43", children: [] },
+      ] },
+    ],
+  };
+
+  it("opens on Ctrl+F, which previously did nothing here", async () => {
+    render(<XmlTreeView value={tree} />);
+    expect(screen.queryByLabelText("Find in document")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    expect(await screen.findByLabelText("Find in document")).toBeInTheDocument();
+  });
+
+  it("finds an element by its text content", async () => {
+    const user = userEvent.setup();
+    render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "ORDER-43");
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+  });
+
+  // Attributes are where XML payloads keep their ids and codes.
+  it("finds an element by an attribute value", async () => {
+    const user = userEvent.setup();
+    render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "pending");
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+  });
+
+  it("counts every matching row and cycles with Enter", async () => {
+    const user = userEvent.setup();
+    render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    const input = await screen.findByLabelText("Find in document");
+
+    await user.type(input, "ORDER-");
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+
+    await user.type(input, "{Enter}");
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
+  });
+
+  it("says so plainly when nothing matches", async () => {
+    const user = userEvent.setup();
+    render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "absent");
+
+    expect(await screen.findByText("No results")).toBeInTheDocument();
+  });
+
+  it("marks the row it is standing on differently from the other matches", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+
+    await user.type(await screen.findByLabelText("Find in document"), "ORDER-");
+    await screen.findByText("1 of 2");
+
+    expect(container.querySelectorAll(".json-tree-line--match-current")).toHaveLength(1);
+    expect(container.querySelectorAll(".json-tree-line--match")).toHaveLength(1);
+  });
+
+  // The behaviour that made the flattened model necessary: a collapsed
+  // subtree has no rows on screen, so the count has to follow the document
+  // as the reader actually has it open.
+  it("stops counting rows inside a subtree the reader has collapsed", async () => {
+    const user = userEvent.setup();
+    render(<XmlTreeView value={tree} />);
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    await user.type(await screen.findByLabelText("Find in document"), "ORDER-");
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+
+    await user.click(screen.getAllByLabelText(/^Collapse order$/)[0]);
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionSt
 import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
 import { usePublishDraftStore } from "./usePublishDraftStore";
+import { useKsqlStore } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
 
 /**
@@ -32,6 +33,12 @@ export const CLUSTER_DATA_QUERY_ROOTS = [
   "topic-config",
   "topic-schema",
   "full-payload",
+  // Covers both ACL queries: the cluster-wide listing (`["acls", id]`) and
+  // every per-resource one (`["acls", id, type, name]`), since the predicate
+  // below matches on the root and the connection id alone.
+  "acls",
+  // The topic tab's "is there a stream over this topic?" lookup.
+  "ksql-stream",
 ] as const;
 
 /**
@@ -66,8 +73,8 @@ export function clearConnectionState(queryClient: QueryClient, connectionId: str
   useMessageViewerStore.getState().clearForConnection(connectionId);
 
   // Everything the Data tab was holding for this cluster: fetched rows and
-  // their byte accounting, the fetch filter form, and the grid's sort,
-  // column filters and search box.
+  // their byte accounting, the fetch filter form, and the grid's sort and
+  // column filters.
   useTabDataStore.getState().clearForConnection(connectionId);
   useDataTabFiltersStore.getState().clearForConnection(connectionId);
   useDataTabGridStateStore.getState().clearForConnection(connectionId);
@@ -79,6 +86,11 @@ export function clearConnectionState(queryClient: QueryClient, connectionId: str
   // re-typing a message is a better outcome than finding one waiting from a
   // session they ended.
   usePublishDraftStore.getState().clearForConnection(connectionId);
+
+  // And every ksqlDB workspace for this cluster: the editor's text, and the
+  // rows a query left behind. A running query is already stopped by the
+  // backend's own `cancel_all_for_connection` when the session ends.
+  useKsqlStore.getState().clearForConnection(connectionId);
 
   // `removeQueries`, not `invalidateQueries`: invalidating marks the data
   // stale and refetches it the moment anything observes it, which against a
