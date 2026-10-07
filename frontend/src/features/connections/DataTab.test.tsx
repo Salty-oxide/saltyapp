@@ -814,14 +814,14 @@ describe("DataTab", () => {
       expect(rowOffsets()).toEqual([1]);
     });
 
-    it("Clear restores every loaded row without another fetch", async () => {
+    it("the x on a row removes its filter from the grid without another fetch", async () => {
       const user = await fetchHeaderMessages();
       await pickKey(user, 1, "source");
       await user.type(screen.getByLabelText("Header value 1"), "orders");
       await user.click(screen.getByRole("button", { name: "Filter" }));
       expect(rowOffsets()).toEqual([3]);
 
-      await user.click(screen.getByRole("button", { name: "Clear" }));
+      await user.click(screen.getByRole("button", { name: "Clear header 1" }));
 
       expect(rowOffsets()).toEqual([1, 2, 3]);
       expect(screen.getByLabelText("Header value 1")).toHaveValue("");

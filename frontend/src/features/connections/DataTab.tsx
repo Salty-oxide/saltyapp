@@ -850,8 +850,7 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
         availableKeys={headerKeys}
         appliedCount={headerFilter.applied.length}
         onChange={(rows) => setHeaderFilter(tabKey, { ...headerFilter, rows })}
-        onApply={() => setHeaderFilter(tabKey, { ...headerFilter, applied: activeHeaderCriteria(headerFilter.rows) })}
-        onClear={() => setHeaderFilter(tabKey, { rows: [emptyHeaderRow()], applied: [] })}
+        onApply={(rows) => setHeaderFilter(tabKey, { rows, applied: activeHeaderCriteria(rows) })}
       />
 
       <p className="data-tab-total-count">
