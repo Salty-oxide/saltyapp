@@ -205,6 +205,29 @@ async fn the_same_holds_when_payloads_are_fetched() {
 /// bimodal — roughly four fetches in five paid the coordinator query and the
 /// fifth slipped past it, so any single fetch could pass by luck. Five
 /// together could not: ~2,100 ms against the ~60 ms this budget allows.
+/// A browse is steady-state when its *median* is under this. Steady state
+/// measures 7-20 ms; the two regressions this guards cost ~99 ms (consumer
+/// closed on the critical path) and ~500 ms (partition list asked of the fetch
+/// consumer) on **every** browse, so both land far above it.
+const STEADY_STATE_MEDIAN: Duration = Duration::from_millis(50);
+
+/// The median, not the sum, because the sum is not robust to the one cost
+/// this test cannot control. Every fetch builds a fresh consumer with no cached
+/// group coordinator, and a FindCoordinator that needs a retry pays ~500 ms of
+/// `retry.backoff.ms`. That lands on a *random* browse — measured at positions
+/// 1, 2 and 3 of five, on roughly one run in six on a 4-core box — so no
+/// warm-up can absorb it, and one such browse alone exceeds any total that
+/// still separates the ~99 ms regression. The regressions are per-browse and
+/// move the median; a lone retry cannot, and the median tolerates two.
+fn browses_are_steady_state(each_ms: &[u128]) -> bool {
+    if each_ms.is_empty() {
+        return false;
+    }
+    let mut sorted = each_ms.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2] < STEADY_STATE_MEDIAN.as_millis()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
     let _serial = BROKER.lock().await;
@@ -227,22 +250,11 @@ async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
 
     // And one discarded browse, for the same reason one step further on.
     //
-    // The *first* fetch in a process intermittently costs ~513 ms where every
-    // later one costs 7-9 ms — measured as `each=[513, 8, 18, 8, 23]`, and
-    // reproducibly on roughly 10-40% of runs depending on what else is
-    // touching the broker. That is a one-off group-coordinator lookup for the
-    // `group.id` `assign()` forces on a fetch consumer: a fresh consumer has
-    // no cached coordinator, and a FindCoordinator that needs a retry pays
-    // ~500 ms of `retry.backoff.ms` before it lands.
-    //
-    // Charging that to the measurement made this test fail for a cost the
-    // real app pays once per session, not once per browse. Excluding it costs
-    // the guard nothing: both regressions named in the assertion below are
-    // *per-browse* costs — ~500 ms if the partition list is asked of the fetch
-    // consumer, ~99 ms if the consumer is closed on the critical path — so
-    // they still show up across the five timed browses that follow. Four or
-    // five samples of the steady-state cost is what this test is about, and
-    // the warm-up is what makes them steady-state.
+    // The first fetch in a process is also the most likely to pay a ~500 ms
+    // group-coordinator lookup, so it is kept out of the samples. It is NOT
+    // the only one that can: every fetch builds a fresh consumer, so any of
+    // the five timed browses can pay it too — which is why the verdict below
+    // is a median rather than a total. See `browses_are_steady_state`.
     client
         .fetch_messages(
             &connection,
@@ -284,12 +296,49 @@ async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
         elapsed.as_millis()
     );
     assert!(
-        elapsed < Duration::from_millis(250),
-        "five 100-message browses took {} ms; each should be ~10. Both costs this guards are \
-         the `group.id` that `assign()` forces on the fetch consumer: ~500 ms if the partition \
-         list is asked of that consumer instead of the pooled metadata client (its group \
-         coordinator query), and ~99 ms if the consumer is closed on the critical path instead \
-         of on the blocking pool. See `fetch_messages`.",
+        browses_are_steady_state(&each),
+        "five 100-message browses took {} ms with each={each:?}; the median should be ~10 ms. \
+         Both costs this guards are the `group.id` that `assign()` forces on the fetch consumer: \
+         ~500 ms on every browse if the partition list is asked of that consumer instead of the \
+         pooled metadata client (its group coordinator query), and ~99 ms on every browse if the \
+         consumer is closed on the critical path instead of on the blocking pool. See \
+         `fetch_messages`.",
         elapsed.as_millis(),
     );
+}
+
+#[cfg(test)]
+mod steady_state_tests {
+    use super::*;
+
+    /// The sample that failed CI: one browse hit the ~500 ms coordinator
+    /// retry backoff, the other four were fine.
+    #[test]
+    fn one_slow_browse_among_fast_ones_is_not_a_regression() {
+        assert!(browses_are_steady_state(&[16, 526, 14, 9, 8]));
+        assert!(browses_are_steady_state(&[15, 22, 512, 12, 7]));
+        assert!(browses_are_steady_state(&[512, 8, 18, 8, 23]));
+    }
+
+    #[test]
+    fn two_slow_browses_among_five_are_still_tolerated() {
+        assert!(browses_are_steady_state(&[510, 9, 505, 10, 8]));
+    }
+
+    /// Partition list asked of the fetch consumer: every browse pays ~500 ms.
+    #[test]
+    fn a_coordinator_query_on_every_browse_is_caught() {
+        assert!(!browses_are_steady_state(&[510, 505, 520, 500, 515]));
+    }
+
+    /// Consumer closed on the critical path: every browse pays ~99 ms.
+    #[test]
+    fn a_close_on_the_critical_path_of_every_browse_is_caught() {
+        assert!(!browses_are_steady_state(&[110, 105, 112, 108, 109]));
+    }
+
+    #[test]
+    fn an_empty_sample_is_not_steady_state() {
+        assert!(!browses_are_steady_state(&[]));
+    }
 }

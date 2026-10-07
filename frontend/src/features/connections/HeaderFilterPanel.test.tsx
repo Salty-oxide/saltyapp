@@ -112,6 +112,72 @@ describe("HeaderFilterPanel", () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * Layout contract, asserted on the icon cluster's children because the gap
+   * is an empty placeholder element, which has no role to query by.
+   */
+  describe("icon order", () => {
+    function iconsOfRow(n: number) {
+      const row = screen.getByLabelText(`Header value ${n}`).closest(".header-filter-row")!;
+      return Array.from(row.querySelector(".header-filter-icons")!.children);
+    }
+    const labelOf = (el: Element) => el.getAttribute("aria-label");
+
+    it("sits Add directly beside Clear on the only row, with no gap between them", () => {
+      render(<Harness />);
+
+      const icons = iconsOfRow(1);
+
+      expect(icons.map(labelOf)).toEqual(["Clear header 1", "Add header"]);
+    });
+
+    it("puts Delete in the middle and Add on the right of the last row once there are two", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+
+      expect(iconsOfRow(2).map(labelOf)).toEqual(["Clear header 2", "Delete header 2", "Add header"]);
+    });
+
+    it("keeps the first row's Clear in the same column as the last row's, with the other two columns held open", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+
+      const first = iconsOfRow(1);
+      expect(first).toHaveLength(3);
+      expect(labelOf(first[0])).toBe("Clear header 1");
+      expect(first[1]).toHaveClass("header-filter-icon-slot");
+      expect(first[2]).toHaveClass("header-filter-icon-slot");
+    });
+
+    it("gives a middle row Clear and Delete, and holds open the Add column", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+
+      const middle = iconsOfRow(2);
+
+      expect(middle).toHaveLength(3);
+      expect(labelOf(middle[0])).toBe("Clear header 2");
+      expect(labelOf(middle[1])).toBe("Delete header 2");
+      expect(middle[2]).toHaveClass("header-filter-icon-slot");
+    });
+
+    it("closes the gap again when rows are deleted back down to one", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+
+      await user.click(screen.getByRole("button", { name: "Delete header 2" }));
+
+      expect(iconsOfRow(1).map(labelOf)).toEqual(["Clear header 1", "Add header"]);
+    });
+  });
+
   it("x clears that row's key and value without removing the row", async () => {
     const user = userEvent.setup();
     render(

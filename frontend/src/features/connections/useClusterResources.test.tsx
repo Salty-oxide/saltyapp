@@ -1,9 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setInvokeHandlers } from "../../lib/testInvoke";
 import { retryDelay, RETRY_DELAY_CAP_MS, shouldRetry } from "../../lib/queryRetry";
-import { useBrokers, useConsumerGroups, useFullPayload, useTopics } from "./useClusterResources";
+import {
+  FULL_PAYLOAD_TIMEOUT_MS,
+  useBrokers,
+  useConsumerGroups,
+  useFullPayload,
+  useTopics,
+} from "./useClusterResources";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -243,5 +249,98 @@ describe("cluster resource queries", () => {
       .filter((query) => query.queryKey[0] === "full-payload");
     expect(held).toHaveLength(1);
     expect(held[0].queryKey).toEqual(["full-payload", "1", "orders", 0, 2]);
+  });
+});
+
+
+/**
+ * The whole-payload fetch has to give up. Its backend idle timer restarts on
+ * every message and a retry policy sits on top of it, so without a deadline of
+ * its own a stuck fetch kept the viewer on its loading state indefinitely.
+ */
+describe("useFullPayload deadline", () => {
+  const message = (offset: number) => ({
+    partition: 0,
+    offset,
+    timestampMs: null,
+    keyBase64: null,
+    payloadBase64: btoa("x"),
+    payloadSizeBytes: 1,
+    headers: [],
+  });
+
+  /** The app's real retry policy, which is what would otherwise multiply the wait. */
+  function appClient() {
+    return new QueryClient({ defaultOptions: { queries: { retry: shouldRetry, retryDelay } } });
+  }
+
+  function Viewer() {
+    const { data, error, isError } = useFullPayload("1", "orders", 0, 7, true);
+    if (isError) return <div>error: {error.message}</div>;
+    return <div>payload: {data?.messages.length ?? "…"}</div>;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is 100 seconds", () => {
+    expect(FULL_PAYLOAD_TIMEOUT_MS).toBe(100_000);
+  });
+
+  it("fails after 100 seconds, tells the backend to stop, and does not retry the timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetched = vi.fn(() => new Promise(() => {}));
+    const cancelled = vi.fn();
+    setInvokeHandlers({ connection_fetch_messages: fetched, connection_cancel_fetch: cancelled });
+    renderWith(appClient(), <Viewer />);
+    await waitFor(() => expect(fetched).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(FULL_PAYLOAD_TIMEOUT_MS - 1_000);
+    expect(screen.getByText("payload: …")).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await waitFor(() => expect(screen.getByText(/error: .*100 seconds/)).toBeInTheDocument());
+    const requestId = (fetched.mock.calls[0] as unknown as [{ requestId: string }])[0].requestId;
+    expect(cancelled).toHaveBeenCalledWith({ requestId });
+    // Well past the app's retry backoff: still the one attempt.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire the deadline for a fetch that finishes in time", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const cancelled = vi.fn();
+    setInvokeHandlers({
+      connection_fetch_messages: () => ({ messages: [message(7)], totalMatching: 1 }),
+      connection_cancel_fetch: cancelled,
+    });
+    renderWith(appClient(), <Viewer />);
+    await waitFor(() => expect(screen.getByText("payload: 1")).toBeInTheDocument());
+
+    await vi.advanceTimersByTimeAsync(FULL_PAYLOAD_TIMEOUT_MS * 2);
+
+    expect(cancelled).not.toHaveBeenCalled();
+    expect(screen.getByText("payload: 1")).toBeInTheDocument();
+  });
+
+  it("reports an error, rather than loading forever, when the fetch returns without the message", async () => {
+    setInvokeHandlers({
+      connection_fetch_messages: () => ({
+        messages: [],
+        totalMatching: 0,
+        pollError: "Broker: Message size too large",
+      }),
+    });
+    renderWith(newClient(), <Viewer />);
+
+    await waitFor(() => expect(screen.getByText(/error: .*Message size too large/)).toBeInTheDocument());
+  });
+
+  it("falls back to a plain message when the empty result has no poll error to quote", async () => {
+    setInvokeHandlers({ connection_fetch_messages: () => ({ messages: [], totalMatching: 0 }) });
+    renderWith(newClient(), <Viewer />);
+
+    await waitFor(() => expect(screen.getByText(/error: .*could not be read/)).toBeInTheDocument());
   });
 });

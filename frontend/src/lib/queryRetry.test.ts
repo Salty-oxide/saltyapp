@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isAuthError, MAX_QUERY_RETRIES, RETRY_DELAY_CAP_MS, retryDelay, shouldRetry } from "./queryRetry";
+import {
+  isAuthError,
+  MAX_QUERY_RETRIES,
+  NonRetryableQueryError,
+  RETRY_DELAY_CAP_MS,
+  retryDelay,
+  shouldRetry,
+} from "./queryRetry";
 
 describe("isAuthError", () => {
   it("recognises the backend's authentication error", () => {
@@ -53,5 +60,16 @@ describe("retryDelay", () => {
   it("jitters, so every open app does not retry the same cluster in lockstep", () => {
     const delays = new Set(Array.from({ length: 50 }, () => retryDelay(2)));
     expect(delays.size).toBeGreaterThan(1);
+  });
+});
+
+describe("NonRetryableQueryError", () => {
+  it("is never retried, however few failures there have been", () => {
+    expect(shouldRetry(0, new NonRetryableQueryError("timed out"))).toBe(false);
+  });
+
+  it("does not change the policy for ordinary errors", () => {
+    expect(shouldRetry(0, new Error("broker unreachable"))).toBe(true);
+    expect(shouldRetry(MAX_QUERY_RETRIES, new Error("broker unreachable"))).toBe(false);
   });
 });
