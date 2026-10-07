@@ -1,7 +1,7 @@
 use chrono::Utc;
 use error_stack::ResultExt;
-use salty_core::Result;
 use salty_core::AppError;
+use salty_core::Result;
 use sqlx::sqlite::SqlitePool;
 
 pub async fn get(
@@ -66,9 +66,7 @@ pub async fn delete(
     .execute(pool)
     .await
     .change_context(AppError::Db)
-    .attach_with(|| {
-        format!("failed to delete schema for {connection_id}/{topic}/{format}")
-    })?;
+    .attach_with(|| format!("failed to delete schema for {connection_id}/{topic}/{format}"))?;
 
     Ok(())
 }
@@ -85,9 +83,7 @@ pub async fn delete_all_for_connection(
         .execute(pool)
         .await
         .change_context(AppError::Db)
-        .attach_with(|| {
-            format!("failed to delete topic schemas for connection {connection_id}")
-        })?;
+        .attach_with(|| format!("failed to delete topic schemas for connection {connection_id}"))?;
 
     Ok(())
 }

@@ -12,8 +12,9 @@ import { useDisconnect } from "./useConnections";
  * TCP check is a blip — a laptop switching networks, a VPN reconnecting, a
  * broker mid-rolling-restart — and acting on it would throw away the user's
  * expanded tree, their fetched messages and their open payload for something
- * that fixes itself before they notice. Two consecutive failures, ten seconds
- * apart (`CONNECTED_STATUS_POLL_MS`), is a cluster that has actually gone.
+ * that fixes itself before they notice. Two consecutive failures — the second
+ * confirmed `UNREACHABLE_RECHECK_MS` after the first, not a full steady
+ * interval later — is a cluster that has actually gone.
  */
 export const UNREACHABLE_POLLS_BEFORE_DISCONNECT = 2;
 

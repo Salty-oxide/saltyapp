@@ -54,7 +54,9 @@ unsafe fn owned_string(ptr: *const std::os::raw::c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Maps a resource type onto librdkafka's own enum.
@@ -121,9 +123,9 @@ fn native_permission(value: AclPermission) -> rd::rd_kafka_AclPermissionType_t {
 fn optional_c_string(value: Option<&str>) -> Result<Option<CString>, AppError> {
     match value {
         None => Ok(None),
-        Some(text) => CString::new(text)
-            .map(Some)
-            .map_err(|_| Report::new(AppError::Validation).attach("filter value contains a NUL byte")),
+        Some(text) => CString::new(text).map(Some).map_err(|_| {
+            Report::new(AppError::Validation).attach("filter value contains a NUL byte")
+        }),
     }
 }
 
@@ -179,7 +181,9 @@ fn describe_acls_blocking(
             native_resource_type(filter.resource_type),
             name.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
             native_pattern_type(filter.pattern_type),
-            principal.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+            principal
+                .as_ref()
+                .map_or(ptr::null(), |value| value.as_ptr()),
             host.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
             native_operation(filter.operation),
             native_permission(filter.permission),
@@ -275,8 +279,9 @@ unsafe fn read_describe_event(event: *mut rd::rd_kafka_event_t) -> Result<AclLis
 
     let result = unsafe { rd::rd_kafka_event_DescribeAcls_result(event) };
     if result.is_null() {
-        return Err(Report::new(AppError::Kafka)
-            .attach("the broker's reply was not an ACL listing"));
+        return Err(
+            Report::new(AppError::Kafka).attach("the broker's reply was not an ACL listing")
+        );
     }
 
     let mut count: usize = 0;
@@ -320,9 +325,9 @@ unsafe fn read_describe_event(event: *mut rd::rd_kafka_event_t) -> Result<AclLis
             } as i32),
             principal: unsafe { owned_string(rd::rd_kafka_AclBinding_principal(binding)) },
             host: unsafe { owned_string(rd::rd_kafka_AclBinding_host(binding)) },
-            operation: AclOperation::from_wire(unsafe {
-                rd::rd_kafka_AclBinding_operation(binding)
-            } as i32),
+            operation: AclOperation::from_wire(
+                unsafe { rd::rd_kafka_AclBinding_operation(binding) } as i32,
+            ),
             permission: AclPermission::from_wire(unsafe {
                 rd::rd_kafka_AclBinding_permission_type(binding)
             } as i32),

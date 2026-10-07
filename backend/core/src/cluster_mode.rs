@@ -131,7 +131,13 @@ fn suggested_version_from(raw: &str) -> Option<String> {
 /// The leading major component of a protocol version, for the "no 4.x
 /// broker can run ZooKeeper" rule.
 fn major_version_from(raw: &str) -> Option<u32> {
-    raw.split('-').next()?.trim().split('.').next()?.parse().ok()
+    raw.split('-')
+        .next()?
+        .trim()
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
@@ -194,7 +200,9 @@ mod tests {
         // metadata.version is the authority on a KRaft cluster and this
         // client cannot read it, so the figure offered is a hint.
         let report = cluster_version_report(Some("broker"), Some("4.1-IV0"));
-        let note = report.note.expect("a kraft version must be flagged as derived");
+        let note = report
+            .note
+            .expect("a kraft version must be flagged as derived");
         assert!(note.contains("metadata.version"), "note was: {note}");
     }
 
@@ -213,7 +221,10 @@ mod tests {
         assert_eq!(suggested_version_from("2.8").as_deref(), Some("2.8"));
         // Pre-1.0 protocol versions carry a third component; the dropdown
         // offers "0.11", so the first two are what matter.
-        assert_eq!(suggested_version_from("0.11.0-IV2").as_deref(), Some("0.11"));
+        assert_eq!(
+            suggested_version_from("0.11.0-IV2").as_deref(),
+            Some("0.11")
+        );
     }
 
     #[test]
@@ -229,9 +240,18 @@ mod tests {
         let report = cluster_version_report(Some("broker"), Some("4.1-IV0"));
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"mode\":\"kraft\""), "json was: {json}");
-        assert!(json.contains("\"processRoles\":\"broker\""), "json was: {json}");
-        assert!(json.contains("\"interBrokerProtocolVersion\":\"4.1-IV0\""), "json was: {json}");
-        assert!(json.contains("\"suggestedVersion\":\"4.1\""), "json was: {json}");
+        assert!(
+            json.contains("\"processRoles\":\"broker\""),
+            "json was: {json}"
+        );
+        assert!(
+            json.contains("\"interBrokerProtocolVersion\":\"4.1-IV0\""),
+            "json was: {json}"
+        );
+        assert!(
+            json.contains("\"suggestedVersion\":\"4.1\""),
+            "json was: {json}"
+        );
     }
 
     #[test]

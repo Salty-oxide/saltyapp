@@ -1,8 +1,8 @@
 use error_stack::{Report, ResultExt};
-use salty_core::Result;
 use salty_core::AppError;
-use std::collections::hash_map::DefaultHasher;
+use salty_core::Result;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -200,7 +200,10 @@ impl SchemaRegistryClients {
         let client = Arc::new(SchemaRegistryClient::new(endpoint, auth)?);
         clients.insert(
             connection_id.to_string(),
-            PooledRegistryClient { fingerprint, client: Arc::clone(&client) },
+            PooledRegistryClient {
+                fingerprint,
+                client: Arc::clone(&client),
+            },
         );
         Ok(client)
     }
@@ -209,7 +212,10 @@ impl SchemaRegistryClients {
     /// or deleted, so nothing keeps serving cached schemas for a registry the
     /// connection no longer points at.
     pub fn release(&self, connection_id: &str) {
-        self.clients.lock().unwrap_or_else(|err| err.into_inner()).remove(connection_id);
+        self.clients
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(connection_id);
     }
 }
 
@@ -227,18 +233,29 @@ mod tests {
         // makes the second view of a topic free.
         let clients = SchemaRegistryClients::default();
 
-        let first = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
-        let second = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
+        let first = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
+        let second = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
 
-        assert!(Arc::ptr_eq(&first, &second), "expected the pooled client, not a rebuilt one");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "expected the pooled client, not a rebuilt one"
+        );
     }
 
     #[test]
     fn keeps_connections_separate() {
         let clients = SchemaRegistryClients::default();
 
-        let one = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
-        let two = clients.get_or_create("conn-2", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
+        let one = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
+        let two = clients
+            .get_or_create("conn-2", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
 
         assert!(!Arc::ptr_eq(&one, &two));
     }
@@ -247,10 +264,21 @@ mod tests {
     fn rebuilds_when_the_endpoint_changes() {
         let clients = SchemaRegistryClients::default();
 
-        let first = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
-        let second = clients.get_or_create("conn-1", "http://localhost:2", SchemaRegistryAuth::default()).unwrap();
+        let first = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
+        let second = clients
+            .get_or_create(
+                "conn-1",
+                "http://localhost:2",
+                SchemaRegistryAuth::default(),
+            )
+            .unwrap();
 
-        assert!(!Arc::ptr_eq(&first, &second), "a client must not outlive the endpoint it was built for");
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a client must not outlive the endpoint it was built for"
+        );
     }
 
     /// Reusing a client built from credentials the user has since replaced
@@ -259,19 +287,36 @@ mod tests {
     #[test]
     fn rebuilds_when_any_auth_field_changes() {
         let changed: [SchemaRegistryAuth<'_>; 4] = [
-            SchemaRegistryAuth { basic_auth_credentials: Some("user:pass"), ..Default::default() },
-            SchemaRegistryAuth { trust_store_location: Some("/tmp/truststore.pem"), ..Default::default() },
-            SchemaRegistryAuth { keystore_location: Some("/tmp/keystore.p12"), ..Default::default() },
-            SchemaRegistryAuth { keystore_password: Some("hunter2"), ..Default::default() },
+            SchemaRegistryAuth {
+                basic_auth_credentials: Some("user:pass"),
+                ..Default::default()
+            },
+            SchemaRegistryAuth {
+                trust_store_location: Some("/tmp/truststore.pem"),
+                ..Default::default()
+            },
+            SchemaRegistryAuth {
+                keystore_location: Some("/tmp/keystore.p12"),
+                ..Default::default()
+            },
+            SchemaRegistryAuth {
+                keystore_password: Some("hunter2"),
+                ..Default::default()
+            },
         ];
 
         for auth in changed {
             let clients = SchemaRegistryClients::default();
-            let before = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
+            let before = clients
+                .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+                .unwrap();
             // Only builds a client when the material is loadable; a keystore
             // path alone never is, so tolerate that and assert on the rest.
             if let Ok(after) = clients.get_or_create("conn-1", ENDPOINT, auth) {
-                assert!(!Arc::ptr_eq(&before, &after), "changed auth must not reuse the old client");
+                assert!(
+                    !Arc::ptr_eq(&before, &after),
+                    "changed auth must not reuse the old client"
+                );
             }
         }
     }
@@ -280,9 +325,13 @@ mod tests {
     fn releasing_a_connection_drops_its_client() {
         let clients = SchemaRegistryClients::default();
 
-        let before = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
+        let before = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
         clients.release("conn-1");
-        let after = clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).unwrap();
+        let after = clients
+            .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+            .unwrap();
 
         assert!(!Arc::ptr_eq(&before, &after));
     }
@@ -304,7 +353,11 @@ mod tests {
         };
 
         assert!(clients.get_or_create("conn-1", ENDPOINT, bad).is_err());
-        assert!(clients.get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default()).is_ok());
+        assert!(
+            clients
+                .get_or_create("conn-1", ENDPOINT, SchemaRegistryAuth::default())
+                .is_ok()
+        );
     }
 
     /// Starts a one-shot HTTP server that replies to the first request it

@@ -12,15 +12,15 @@
 //! can act on.
 
 use error_stack::Report;
-use salty_core::{
-    AppError, Connection, DeliveredRecord, EncodedRecord, PublishFailure, PublishFailureKind,
-    PublishOutcome,
-};
 use rdkafka::client::ClientContext;
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::message::{Header, OwnedHeaders};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::util::Timeout;
+use salty_core::{
+    AppError, Connection, DeliveredRecord, EncodedRecord, PublishFailure, PublishFailureKind,
+    PublishOutcome,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -209,9 +209,8 @@ pub async fn publish_messages(
 ) -> Result<PublishOutcome, Report<AppError>> {
     let config = publish_config(connection, max_message_size_bytes, write_timeout);
     let errors = ProducerErrorContext::default();
-    let producer: FutureProducer<ProducerErrorContext> = config
-        .create_with_context(errors.clone())
-        .map_err(|err| {
+    let producer: FutureProducer<ProducerErrorContext> =
+        config.create_with_context(errors.clone()).map_err(|err| {
             Report::new(AppError::Kafka)
                 .attach(format!("failed to create a producer for publishing: {err}"))
         })?;
@@ -235,7 +234,10 @@ pub async fn publish_messages(
         // time the local queue can never be full, so blocking on it would only
         // ever hide a real problem. How long the record itself may take is
         // `message.timeout.ms`, set from the user's timeout in `publish_config`.
-        match producer.send(future_record, Timeout::After(Duration::ZERO)).await {
+        match producer
+            .send(future_record, Timeout::After(Duration::ZERO))
+            .await
+        {
             // rdkafka 0.39 returns a named `Delivery` struct here instead of
             // the `(partition, offset)` tuple 0.36 did; it also carries the
             // broker's timestamp, which nothing here needs yet.
@@ -364,31 +366,46 @@ mod tests {
     #[test]
     fn an_oversized_message_is_a_validation_error() {
         let error = KafkaError::MessageProduction(RDKafkaErrorCode::MessageSizeTooLarge);
-        assert!(matches!(classify_produce_error(&error, None), AppError::Validation));
+        assert!(matches!(
+            classify_produce_error(&error, None),
+            AppError::Validation
+        ));
     }
 
     #[test]
     fn an_unknown_topic_or_partition_is_a_validation_error() {
         let error = KafkaError::MessageProduction(RDKafkaErrorCode::UnknownTopicOrPartition);
-        assert!(matches!(classify_produce_error(&error, None), AppError::Validation));
+        assert!(matches!(
+            classify_produce_error(&error, None),
+            AppError::Validation
+        ));
     }
 
     #[test]
     fn a_transport_failure_stays_a_retryable_kafka_error() {
         let error = KafkaError::MessageProduction(RDKafkaErrorCode::BrokerTransportFailure);
-        assert!(matches!(classify_produce_error(&error, None), AppError::Kafka));
+        assert!(matches!(
+            classify_produce_error(&error, None),
+            AppError::Kafka
+        ));
     }
 
     #[test]
     fn a_timeout_stays_a_retryable_kafka_error() {
         let error = KafkaError::MessageProduction(RDKafkaErrorCode::MessageTimedOut);
-        assert!(matches!(classify_produce_error(&error, None), AppError::Kafka));
+        assert!(matches!(
+            classify_produce_error(&error, None),
+            AppError::Kafka
+        ));
     }
 
     #[test]
     fn a_full_local_queue_stays_a_retryable_kafka_error() {
         let error = KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull);
-        assert!(matches!(classify_produce_error(&error, None), AppError::Kafka));
+        assert!(matches!(
+            classify_produce_error(&error, None),
+            AppError::Kafka
+        ));
     }
 
     // --- error wording ---------------------------------------------------
@@ -429,7 +446,10 @@ mod tests {
             key: None,
             value: None,
             headers: vec![
-                ("content-type".to_string(), Some(b"application/json".to_vec())),
+                (
+                    "content-type".to_string(),
+                    Some(b"application/json".to_vec()),
+                ),
                 ("flag".to_string(), None),
             ],
         };
@@ -461,8 +481,14 @@ mod tests {
         .await
         .expect("a produce failure is an outcome, not an error");
 
-        assert!(outcome.delivered.is_empty(), "nothing can have been delivered");
-        let failure = outcome.failure.as_ref().expect("the first message must have failed");
+        assert!(
+            outcome.delivered.is_empty(),
+            "nothing can have been delivered"
+        );
+        let failure = outcome
+            .failure
+            .as_ref()
+            .expect("the first message must have failed");
         assert_eq!(failure.index, 0);
         assert_eq!(
             outcome.not_attempted, 2,
@@ -511,7 +537,10 @@ mod tests {
         .expect("librdkafka builds a producer with no brokers configured");
 
         assert!(outcome.delivered.is_empty());
-        assert!(!outcome.succeeded(), "a record with nowhere to go is not published");
+        assert!(
+            !outcome.succeeded(),
+            "a record with nowhere to go is not published"
+        );
     }
 
     #[tokio::test]
@@ -620,5 +649,4 @@ mod tests {
             Some("Authentication failed: first".to_string())
         );
     }
-
 }

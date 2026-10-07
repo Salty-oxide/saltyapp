@@ -44,7 +44,9 @@ pub(crate) fn report_reasons(report: &error_stack::Report<salty_core::AppError>)
     report
         .frames()
         .filter_map(|frame| match frame.kind() {
-            FrameKind::Attachment(AttachmentKind::Printable(printable)) => Some(printable.to_string()),
+            FrameKind::Attachment(AttachmentKind::Printable(printable)) => {
+                Some(printable.to_string())
+            }
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -67,7 +69,10 @@ pub(crate) fn report_reasons(report: &error_stack::Report<salty_core::AppError>)
 /// `connection_update`) or by an explicit Reconnect (see
 /// `connection_connect`, which clears it before calling this) — both are
 /// deliberate acts by a user who has had a chance to fix the credentials.
-pub(crate) async fn connection_for_request(state: &AppState, id: &str) -> Result<Connection, CommandError> {
+pub(crate) async fn connection_for_request(
+    state: &AppState,
+    id: &str,
+) -> Result<Connection, CommandError> {
     if let Some(reason) = state.connections.auth_block_reason(id) {
         return Err(CommandError {
             message: format!(
@@ -93,7 +98,9 @@ fn record_auth_outcome<T>(
         Ok(_) => state.connections.record_auth_success(id),
         Err(report) => {
             if matches!(report.current_context(), AppError::Authentication) {
-                state.connections.record_auth_failure(id, &report_reasons(report));
+                state
+                    .connections
+                    .record_auth_failure(id, &report_reasons(report));
                 // Keeping a client the broker has rejected would mean the
                 // next request reuses a connection that cannot work.
                 state.kafka.release(id);
@@ -141,8 +148,17 @@ pub(crate) fn record_auth_success_only<T>(
 /// asks why listing topics on a freshly connected cluster isn't instant,
 /// this is the number that answers it, per call, from their own machine and
 /// their own cluster.
-pub(crate) fn log_broker_call(app: &AppHandle, what: &str, started: std::time::Instant, outcome: &str) {
-    crate::logging::emit_log(app, "info", format!("{what} {outcome} in {} ms", started.elapsed().as_millis()));
+pub(crate) fn log_broker_call(
+    app: &AppHandle,
+    what: &str,
+    started: std::time::Instant,
+    outcome: &str,
+) {
+    crate::logging::emit_log(
+        app,
+        "info",
+        format!("{what} {outcome} in {} ms", started.elapsed().as_millis()),
+    );
 }
 
 #[tauri::command]
@@ -161,7 +177,11 @@ pub async fn connection_create(
     crate::logging::emit_log(
         &app,
         "info",
-        format!("Created connection \"{}\" in {} ms", connection.name, started.elapsed().as_millis()),
+        format!(
+            "Created connection \"{}\" in {} ms",
+            connection.name,
+            started.elapsed().as_millis()
+        ),
     );
     Ok(connection)
 }
@@ -189,7 +209,11 @@ pub async fn connection_update(
     crate::logging::emit_log(
         &app,
         "info",
-        format!("Updated connection \"{}\" in {} ms", connection.name, started.elapsed().as_millis()),
+        format!(
+            "Updated connection \"{}\" in {} ms",
+            connection.name,
+            started.elapsed().as_millis()
+        ),
     );
     Ok(connection)
 }
@@ -212,7 +236,10 @@ pub async fn connection_delete(
     crate::logging::emit_log(
         &app,
         "info",
-        format!("Deleted connection {id} in {} ms", started.elapsed().as_millis()),
+        format!(
+            "Deleted connection {id} in {} ms",
+            started.elapsed().as_millis()
+        ),
     );
     Ok(())
 }
@@ -255,14 +282,20 @@ pub async fn connections_export(
 /// than overwritten or duplicated; imported connections always land with
 /// empty credential fields, same as any other freshly created connection.
 #[tauri::command]
-pub async fn connections_import(state: State<'_, AppState>, path: String) -> Result<ImportSummary, CommandError> {
+pub async fn connections_import(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<ImportSummary, CommandError> {
     let text = std::fs::read_to_string(&path)
         .change_context(AppError::Validation)
         .attach("failed to read the connections export file")?;
     let file = ConnectionExportFile::parse(&text)?;
 
     let existing = salty_db::connections::list(&state.pool).await?;
-    let existing_names: HashSet<String> = existing.into_iter().map(|connection| connection.name).collect();
+    let existing_names: HashSet<String> = existing
+        .into_iter()
+        .map(|connection| connection.name)
+        .collect();
     let (importable, skipped) = partition_importable(&file.connections, &existing_names);
     let imported = importable.len();
 
@@ -372,7 +405,12 @@ pub async fn connection_connect(
     // instead of each paying for its own handshake.
     let result = state.kafka.connect(&connection).await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Connecting", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Connecting",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
 
     let status = result?;
     if status == ConnectionStatus::Reachable {
@@ -383,7 +421,11 @@ pub async fn connection_connect(
 
 /// Backs the cluster detail panel's "Disconnect" button.
 #[tauri::command]
-pub async fn connection_disconnect(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
+pub async fn connection_disconnect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), CommandError> {
     let started = std::time::Instant::now();
     state.connections.mark_disconnected(&id);
     // A fetch already inside its poll loop holds its own consumer, so
@@ -417,7 +459,10 @@ pub async fn connection_disconnect(app: AppHandle, state: State<'_, AppState>, i
 }
 
 #[tauri::command]
-pub async fn connection_is_connected(state: State<'_, AppState>, id: String) -> Result<bool, CommandError> {
+pub async fn connection_is_connected(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, CommandError> {
     Ok(state.connections.is_connected(&id))
 }
 
@@ -445,9 +490,17 @@ pub async fn connection_list_brokers(
 ) -> Result<Vec<salty_core::BrokerSummary>, CommandError> {
     let connection = connection_for_request(&state, &id).await?;
     let started = std::time::Instant::now();
-    let result = state.kafka.list_brokers(&connection, Duration::from_millis(read_timeout_ms)).await;
+    let result = state
+        .kafka
+        .list_brokers(&connection, Duration::from_millis(read_timeout_ms))
+        .await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Listing brokers", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Listing brokers",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -461,9 +514,17 @@ pub async fn connection_list_topics(
 ) -> Result<Vec<salty_core::TopicSummary>, CommandError> {
     let connection = connection_for_request(&state, &id).await?;
     let started = std::time::Instant::now();
-    let result = state.kafka.list_topics(&connection, Duration::from_millis(read_timeout_ms)).await;
+    let result = state
+        .kafka
+        .list_topics(&connection, Duration::from_millis(read_timeout_ms))
+        .await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Listing topics", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Listing topics",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -482,7 +543,12 @@ pub async fn connection_list_consumer_groups(
         .list_consumer_groups(&connection, Duration::from_millis(read_timeout_ms))
         .await;
     record_auth_success_only(&state, &id, &result);
-    log_broker_call(&app, "Listing consumer groups", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Listing consumer groups",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -502,7 +568,12 @@ pub async fn connection_count_topic_messages(
         .count_topic_messages(&connection, &topic, Duration::from_millis(read_timeout_ms))
         .await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Counting topic messages", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Counting topic messages",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -600,7 +671,9 @@ pub async fn connection_fetch_messages(
     // poll loop. `Instant` is `Copy`, so the progress closure below gets its
     // own copy of the same start.
     let started = std::time::Instant::now();
-    let cancelled = state.fetch_cancellations.begin_for_connection(&request_id, &id);
+    let cancelled = state
+        .fetch_cancellations
+        .begin_for_connection(&request_id, &id);
     let connection = match connection_for_request(&state, &id).await {
         Ok(connection) => connection,
         Err(err) => {
@@ -609,7 +682,11 @@ pub async fn connection_fetch_messages(
             return Err(err);
         }
     };
-    crate::logging::emit_log(&app, "info", format!("Fetching messages for topic \"{topic}\"..."));
+    crate::logging::emit_log(
+        &app,
+        "info",
+        format!("Fetching messages for topic \"{topic}\"..."),
+    );
     // Only when the caller is streaming. Handing the fetch a sender it does
     // not need would have it clone every message into a channel nobody reads.
     //
@@ -770,7 +847,10 @@ pub async fn connection_fetch_messages(
 /// finished or was never started — Stop racing the fetch's own completion
 /// is the ordinary case.
 #[tauri::command]
-pub async fn connection_cancel_fetch(state: State<'_, AppState>, request_id: String) -> Result<(), CommandError> {
+pub async fn connection_cancel_fetch(
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<(), CommandError> {
     state.fetch_cancellations.cancel(&request_id);
     Ok(())
 }
@@ -791,7 +871,12 @@ pub async fn connection_list_partitions(
         .list_partitions(&connection, &topic, Duration::from_millis(read_timeout_ms))
         .await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Listing partitions", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Listing partitions",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -811,7 +896,12 @@ pub async fn connection_describe_topic_config(
         .describe_topic_config(&connection, &topic, Duration::from_millis(read_timeout_ms))
         .await;
     record_auth_outcome(&state, &id, &result);
-    log_broker_call(&app, "Describing topic config", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Describing topic config",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
@@ -828,9 +918,18 @@ pub async fn connection_fetch_consumer_group_lag(
     let started = std::time::Instant::now();
     let result = state
         .kafka
-        .fetch_consumer_group_lag(&connection, &group_id, Duration::from_millis(read_timeout_ms))
+        .fetch_consumer_group_lag(
+            &connection,
+            &group_id,
+            Duration::from_millis(read_timeout_ms),
+        )
         .await;
     record_auth_success_only(&state, &id, &result);
-    log_broker_call(&app, "Fetching consumer group lag", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Fetching consumer group lag",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }

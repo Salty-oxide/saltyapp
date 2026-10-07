@@ -1,6 +1,6 @@
 use error_stack::ResultExt;
-use salty_core::Result;
 use salty_core::AppError;
+use salty_core::Result;
 
 /// Decodes a `GroupMemberInfo::assignment()` byte slice (Kafka's
 /// `ConsumerProtocolAssignment` wire format) into the flat list of
@@ -143,7 +143,10 @@ mod tests {
         bytes.extend(encode_i32(5));
 
         let result = decode_consumer_protocol_assignment(&bytes).unwrap();
-        assert_eq!(result, vec![("orders".to_string(), 0), ("payments".to_string(), 5)]);
+        assert_eq!(
+            result,
+            vec![("orders".to_string(), 0), ("payments".to_string(), 5)]
+        );
     }
 
     #[test]

@@ -22,7 +22,9 @@ use salty_kafka::{BrokerSslConfig, KafkaClient, RdKafkaClient};
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn acl_bootstrap() -> Option<String> {
-    std::env::var("SALTY_E2E_ACL_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_ACL_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 macro_rules! acl_broker {
@@ -37,7 +39,11 @@ macro_rules! acl_broker {
     };
 }
 
-async fn detect_as(bootstrap: &str, user: &str, password: &str) -> salty_core::ClusterVersionReport {
+async fn detect_as(
+    bootstrap: &str,
+    user: &str,
+    password: &str,
+) -> salty_core::ClusterVersionReport {
     RdKafkaClient::new()
         .detect_cluster_version(
             bootstrap,
@@ -83,6 +89,9 @@ async fn the_super_user_reads_the_same_cluster_fine() {
     let report = detect_as(&bootstrap, "admin", "admin-secret").await;
 
     assert_eq!(report.mode, MetadataMode::Kraft, "report was: {report:?}");
-    let roles = report.process_roles.as_deref().expect("a super user may read process.roles");
+    let roles = report
+        .process_roles
+        .as_deref()
+        .expect("a super user may read process.roles");
     assert!(!roles.trim().is_empty(), "process.roles was: {roles:?}");
 }

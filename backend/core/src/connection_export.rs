@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use error_stack::{Report, ResultExt};
 use crate::Result;
+use error_stack::{Report, ResultExt};
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{Connection, NewConnection, SaslMechanism, SecurityProtocol};
@@ -53,7 +53,9 @@ impl From<&Connection> for PortableConnection {
             sasl_oauth_url: connection.sasl_oauth_url.clone(),
             schema_registry_endpoint: connection.schema_registry_endpoint.clone(),
             ksqldb_endpoint: connection.ksqldb_endpoint.clone(),
-            schema_registry_trust_store_location: connection.schema_registry_trust_store_location.clone(),
+            schema_registry_trust_store_location: connection
+                .schema_registry_trust_store_location
+                .clone(),
             schema_registry_keystore_location: connection.schema_registry_keystore_location.clone(),
             ssl_truststore_location: connection.ssl_truststore_location.clone(),
             ssl_keystore_location: connection.ssl_keystore_location.clone(),
@@ -239,7 +241,10 @@ mod tests {
         assert_eq!(portable.security_protocol, SecurityProtocol::SaslSsl);
         assert_eq!(portable.sasl_mechanism, Some(SaslMechanism::ScramSha512));
         assert_eq!(portable.sasl_username.as_deref(), Some("alice"));
-        assert_eq!(portable.sasl_oauth_url.as_deref(), Some("https://oauth.example.com"));
+        assert_eq!(
+            portable.sasl_oauth_url.as_deref(),
+            Some("https://oauth.example.com")
+        );
         assert_eq!(
             portable.schema_registry_endpoint.as_deref(),
             Some("https://schema.example.com")
@@ -256,7 +261,10 @@ mod tests {
             portable.ssl_truststore_location.as_deref(),
             Some("/certs/broker-truststore.jks")
         );
-        assert_eq!(portable.ssl_keystore_location.as_deref(), Some("/certs/broker-keystore.jks"));
+        assert_eq!(
+            portable.ssl_keystore_location.as_deref(),
+            Some("/certs/broker-keystore.jks")
+        );
     }
 
     #[test]
@@ -333,7 +341,10 @@ mod tests {
             "broker-ks-secret",
             "broker-ks-key-secret",
         ] {
-            assert!(!json.contains(secret), "export JSON leaked a secret value: {secret}");
+            assert!(
+                !json.contains(secret),
+                "export JSON leaked a secret value: {secret}"
+            );
         }
     }
 
@@ -346,11 +357,23 @@ mod tests {
         assert_eq!(new_connection.name, "Prod");
         assert_eq!(new_connection.sasl_username.as_deref(), Some("alice"));
         assert!(new_connection.sasl_password.is_none());
-        assert!(new_connection.schema_registry_basic_auth_credentials.is_none());
+        assert!(
+            new_connection
+                .schema_registry_basic_auth_credentials
+                .is_none()
+        );
         assert!(new_connection.ksqldb_basic_auth_credentials.is_none());
-        assert!(new_connection.schema_registry_trust_store_password.is_none());
+        assert!(
+            new_connection
+                .schema_registry_trust_store_password
+                .is_none()
+        );
         assert!(new_connection.schema_registry_keystore_password.is_none());
-        assert!(new_connection.schema_registry_keystore_key_password.is_none());
+        assert!(
+            new_connection
+                .schema_registry_keystore_key_password
+                .is_none()
+        );
         assert!(new_connection.ssl_truststore_password.is_none());
         assert!(new_connection.ssl_keystore_password.is_none());
         assert!(new_connection.ssl_keystore_key_password.is_none());
@@ -405,7 +428,10 @@ mod tests {
 
     #[test]
     fn select_for_export_returns_every_connection_when_ids_is_none() {
-        let all = vec![sample_connection("1", "Prod"), sample_connection("2", "Staging")];
+        let all = vec![
+            sample_connection("1", "Prod"),
+            sample_connection("2", "Staging"),
+        ];
 
         let selected = select_for_export(&all, None);
 
@@ -414,7 +440,10 @@ mod tests {
 
     #[test]
     fn select_for_export_returns_only_the_matching_ids() {
-        let all = vec![sample_connection("1", "Prod"), sample_connection("2", "Staging")];
+        let all = vec![
+            sample_connection("1", "Prod"),
+            sample_connection("2", "Staging"),
+        ];
 
         let selected = select_for_export(&all, Some(&["2".to_string()]));
 

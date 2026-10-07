@@ -232,8 +232,11 @@ impl AclOperation {
     /// The operations a consumer group's Access tab shows a column for.
     /// A group can be described, read (joined), and deleted; nothing else
     /// applies.
-    pub const GROUP_COLUMNS: [AclOperation; 3] =
-        [AclOperation::Describe, AclOperation::Read, AclOperation::Delete];
+    pub const GROUP_COLUMNS: [AclOperation; 3] = [
+        AclOperation::Describe,
+        AclOperation::Read,
+        AclOperation::Delete,
+    ];
 }
 
 /// Whether a binding grants or refuses.
@@ -528,7 +531,11 @@ mod tests {
 
     #[test]
     fn permission_round_trips_through_its_wire_value() {
-        for value in [AclPermission::Any, AclPermission::Deny, AclPermission::Allow] {
+        for value in [
+            AclPermission::Any,
+            AclPermission::Deny,
+            AclPermission::Allow,
+        ] {
             assert_eq!(AclPermission::from_wire(value.as_wire()), value);
         }
     }

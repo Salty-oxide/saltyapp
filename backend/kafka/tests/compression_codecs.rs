@@ -24,12 +24,12 @@
 //! the test reports itself skipped rather than failing — `cargo test` on a
 //! machine with no Kafka stays green.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
 use salty_kafka::{KafkaClient, RdKafkaClient};
 
@@ -43,7 +43,9 @@ const CODECS: &[&str] = &["gzip", "snappy", "lz4", "zstd"];
 const EXPECTED_MESSAGES: usize = 20;
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 /// Topics are named `<prefix><codec>`; the prefix is overridable so a run
@@ -114,7 +116,10 @@ async fn every_compression_codec_can_be_fetched() {
         return;
     };
 
-    println!("librdkafka builtin.features = {}", salty_kafka::build_info::builtin_features());
+    println!(
+        "librdkafka builtin.features = {}",
+        salty_kafka::build_info::builtin_features()
+    );
 
     let client = RdKafkaClient::new();
     let connection = connection(bootstrap);
@@ -171,7 +176,10 @@ async fn every_compression_codec_can_be_fetched() {
                         break;
                     }
                 }
-                println!("{codec}: {} messages read and decompressed", fetched.messages.len());
+                println!(
+                    "{codec}: {} messages read and decompressed",
+                    fetched.messages.len()
+                );
             }
         }
     }

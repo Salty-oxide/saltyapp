@@ -1,9 +1,9 @@
 use error_stack::ResultExt;
-use salty_core::Result;
 use salty_core::AppError;
+use salty_core::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
 use sqlx::FromRow;
+use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, PartialEq, Eq)]
@@ -182,9 +182,12 @@ mod tests {
         let second = create(&pool, "Second").await.unwrap();
         let third = create(&pool, "Third").await.unwrap();
 
-        reorder(&pool, &[third.id.clone(), first.id.clone(), second.id.clone()])
-            .await
-            .unwrap();
+        reorder(
+            &pool,
+            &[third.id.clone(), first.id.clone(), second.id.clone()],
+        )
+        .await
+        .unwrap();
 
         let tabs = list(&pool).await.unwrap();
         assert_eq!(

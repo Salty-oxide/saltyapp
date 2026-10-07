@@ -22,7 +22,7 @@ pub mod statement;
 
 pub use client::{KsqlClient, KsqlEndpoint};
 pub use protocol::{
-    parse_header, parse_row, parse_server_error, parse_streams, stream_for_topic, KsqlColumn,
-    KsqlQueryHeader, KsqlRow, KsqlServerError,
+    KsqlColumn, KsqlQueryHeader, KsqlRow, KsqlServerError, parse_header, parse_row,
+    parse_server_error, parse_streams, stream_for_topic,
 };
-pub use statement::{classify, decide, Decision, StatementKind};
+pub use statement::{Decision, StatementKind, classify, decide};

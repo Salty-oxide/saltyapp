@@ -1,7 +1,7 @@
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use salty_core::{Connection, SaslMechanism, SecurityProtocol};
+use base64::engine::general_purpose::STANDARD as BASE64;
 use rdkafka::ClientConfig;
+use salty_core::{Connection, SaslMechanism, SecurityProtocol};
 use std::sync::OnceLock;
 
 /// Broker TLS material from the New Connection modal's Security tab. Only
@@ -34,7 +34,10 @@ pub fn build_client_config(
 ) -> ClientConfig {
     let mut config = ClientConfig::new();
     config.set("bootstrap.servers", bootstrap_servers);
-    config.set("security.protocol", security_protocol.to_string().to_lowercase());
+    config.set(
+        "security.protocol",
+        security_protocol.to_string().to_lowercase(),
+    );
     // Set here rather than at each call site so it covers every client the
     // app builds — the pooled metadata consumer, each fetch's own consumer,
     // the admin client, and the modal's Test probe alike. See `CLIENT_ID`.
@@ -54,8 +57,10 @@ pub fn build_client_config(
 
     if let Some(location) = ssl.truststore_location {
         config.set("ssl.ca.location", location);
-    } else if matches!(security_protocol, SecurityProtocol::Ssl | SecurityProtocol::SaslSsl)
-        && let Some(pem) = native_ca_bundle_pem()
+    } else if matches!(
+        security_protocol,
+        SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
+    ) && let Some(pem) = native_ca_bundle_pem()
     {
         config.set("ssl.ca.pem", pem);
     }
@@ -100,7 +105,10 @@ pub fn build_client_config(
 /// every release — attributable, but useless for telling an operator (or a
 /// support thread) *which* build a user is running.
 fn client_id() -> &'static str {
-    APP_CLIENT_ID.get().map(String::as_str).unwrap_or(FALLBACK_CLIENT_ID)
+    APP_CLIENT_ID
+        .get()
+        .map(String::as_str)
+        .unwrap_or(FALLBACK_CLIENT_ID)
 }
 
 /// Used until [`set_app_version`] runs, and by this crate's own tests, which
@@ -202,7 +210,9 @@ static NATIVE_CA_BUNDLE: OnceLock<Option<String>> = OnceLock::new();
 ///
 /// Cached in [`NATIVE_CA_BUNDLE`]; the work below happens once per run.
 fn native_ca_bundle_pem() -> Option<&'static str> {
-    NATIVE_CA_BUNDLE.get_or_init(build_native_ca_bundle_pem).as_deref()
+    NATIVE_CA_BUNDLE
+        .get_or_init(build_native_ca_bundle_pem)
+        .as_deref()
 }
 
 fn build_native_ca_bundle_pem() -> Option<String> {
@@ -261,7 +271,10 @@ pub fn fetch_consumer_config(connection: &Connection, max_message_size_bytes: u3
     let mut config = client_config(connection);
     config.set("group.id", "salty-message-browser");
     config.set("enable.auto.commit", "false");
-    config.set("max.partition.fetch.bytes", max_message_size_bytes.to_string());
+    config.set(
+        "max.partition.fetch.bytes",
+        max_message_size_bytes.to_string(),
+    );
 
     // librdkafka keeps pre-fetching ahead of what this fetch will actually
     // consume: assigning a partition at an offset tells it where to start,
@@ -488,8 +501,16 @@ mod tests {
     fn a_lowered_prefetch_queue_comes_with_a_lowered_queue_backoff() {
         let config = fetch_consumer_config(&sample_connection(), 1_048_576);
 
-        let queue_kbytes: u64 = config.get("queued.max.messages.kbytes").unwrap().parse().unwrap();
-        let backoff_ms: u64 = config.get("fetch.queue.backoff.ms").unwrap().parse().unwrap();
+        let queue_kbytes: u64 = config
+            .get("queued.max.messages.kbytes")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let backoff_ms: u64 = config
+            .get("fetch.queue.backoff.ms")
+            .unwrap()
+            .parse()
+            .unwrap();
 
         // 64 MB is librdkafka's default queue; anything below it means the
         // threshold is reached often enough that the backoff is paid
@@ -547,8 +568,12 @@ mod tests {
     fn the_prefetch_queue_always_holds_at_least_one_maximum_size_message() {
         for max_message_size in [1_024u32, 1_048_576, 12 * 1_048_576] {
             let config = fetch_consumer_config(&sample_connection(), max_message_size);
-            let queue_bytes: u64 =
-                config.get("queued.max.messages.kbytes").unwrap().parse::<u64>().unwrap() * 1024;
+            let queue_bytes: u64 = config
+                .get("queued.max.messages.kbytes")
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+                * 1024;
             assert!(
                 queue_bytes >= u64::from(max_message_size),
                 "a {max_message_size} byte message does not fit in a {queue_bytes} byte queue"
@@ -602,7 +627,10 @@ mod tests {
         let second = native_ca_bundle_pem();
 
         match (first, second) {
-            (Some(a), Some(b)) => assert!(std::ptr::eq(a, b), "expected the same cached bundle, not a rebuilt one"),
+            (Some(a), Some(b)) => assert!(
+                std::ptr::eq(a, b),
+                "expected the same cached bundle, not a rebuilt one"
+            ),
             (None, None) => {}
             _ => panic!("the cached bundle changed between calls"),
         }
@@ -621,7 +649,10 @@ mod tests {
     #[test]
     fn abandons_a_stalled_connection_setup_well_inside_a_request_timeout() {
         let config = client_config(&sample_connection());
-        assert_eq!(config.get("socket.connection.setup.timeout.ms"), Some("5000"));
+        assert_eq!(
+            config.get("socket.connection.setup.timeout.ms"),
+            Some("5000")
+        );
     }
 
     /// Pins `APP_CLIENT_ID` before reading it.
@@ -644,7 +675,9 @@ mod tests {
     fn identifies_itself_to_the_broker_rather_than_using_librdkafkas_default() {
         stable_client_id();
         let config = client_config(&sample_connection());
-        let client_id = config.get("client.id").expect("client.id must always be set");
+        let client_id = config
+            .get("client.id")
+            .expect("client.id must always be set");
 
         assert!(
             client_id.starts_with("salty"),
@@ -676,7 +709,10 @@ mod tests {
     #[test]
     fn does_not_leak_the_machine_or_user_identity_in_the_client_id() {
         let id = stable_client_id();
-        assert!(!id.contains(char::is_whitespace), "client id must be a single token");
+        assert!(
+            !id.contains(char::is_whitespace),
+            "client id must be a single token"
+        );
 
         for leaked in [std::env::var("HOSTNAME"), std::env::var("USER")] {
             if let Ok(value) = leaked
@@ -697,8 +733,14 @@ mod tests {
         // whichever test set it first wins, and any of them supplies one.
         let id = stable_client_id();
 
-        assert!(id.starts_with("salty/"), "expected a versioned id, got {id:?}");
-        assert!(id.len() > "salty/".len(), "expected a version after the prefix, got {id:?}");
+        assert!(
+            id.starts_with("salty/"),
+            "expected a versioned id, got {id:?}"
+        );
+        assert!(
+            id.len() > "salty/".len(),
+            "expected a version after the prefix, got {id:?}"
+        );
     }
 
     #[test]
@@ -723,7 +765,10 @@ mod tests {
         );
 
         assert_eq!(config.get("reconnect.backoff.ms"), Some("1000"));
-        assert_eq!(config.get("socket.connection.setup.timeout.ms"), Some("5000"));
+        assert_eq!(
+            config.get("socket.connection.setup.timeout.ms"),
+            Some("5000")
+        );
     }
 
     #[test]
@@ -772,7 +817,10 @@ mod tests {
 
         let config = client_config(&connection);
         assert_eq!(config.get("ssl.ca.location"), Some("/etc/broker-ts.pem"));
-        assert_eq!(config.get("ssl.keystore.location"), Some("/etc/broker-ks.p12"));
+        assert_eq!(
+            config.get("ssl.keystore.location"),
+            Some("/etc/broker-ks.p12")
+        );
     }
 
     #[test]
@@ -807,7 +855,10 @@ mod tests {
         );
 
         assert_eq!(config.get("ssl.ca.location"), Some("/etc/broker-ts.pem"));
-        assert_eq!(config.get("ssl.keystore.location"), Some("/etc/broker-ks.p12"));
+        assert_eq!(
+            config.get("ssl.keystore.location"),
+            Some("/etc/broker-ks.p12")
+        );
         assert_eq!(config.get("ssl.keystore.password"), Some("keystore-secret"));
         assert_eq!(config.get("ssl.key.password"), Some("key-secret"));
     }
@@ -849,7 +900,10 @@ mod tests {
         );
 
         let ca_pem = config.get("ssl.ca.pem").expect("ssl.ca.pem should be set");
-        assert!(ca_pem.contains("BEGIN CERTIFICATE"), "expected PEM-encoded certificates, got: {ca_pem}");
+        assert!(
+            ca_pem.contains("BEGIN CERTIFICATE"),
+            "expected PEM-encoded certificates, got: {ca_pem}"
+        );
     }
 
     #[test]
@@ -864,7 +918,10 @@ mod tests {
         );
 
         let ca_pem = config.get("ssl.ca.pem").expect("ssl.ca.pem should be set");
-        assert!(ca_pem.contains("BEGIN CERTIFICATE"), "expected PEM-encoded certificates, got: {ca_pem}");
+        assert!(
+            ca_pem.contains("BEGIN CERTIFICATE"),
+            "expected PEM-encoded certificates, got: {ca_pem}"
+        );
     }
 
     #[test]
@@ -960,5 +1017,4 @@ mod tests {
         assert_eq!(config.get("sasl.username"), Some("kafka-user"));
         assert_eq!(config.get("client.id"), Some(broker_client_id()));
     }
-
 }

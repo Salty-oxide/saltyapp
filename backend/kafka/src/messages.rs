@@ -93,14 +93,17 @@ pub fn distribute_total_budget(
         return windows.clone();
     };
 
-    let mut allocated: BTreeMap<i32, i64> = windows.keys().map(|&partition| (partition, 0)).collect();
+    let mut allocated: BTreeMap<i32, i64> =
+        windows.keys().map(|&partition| (partition, 0)).collect();
     let mut remaining = i64::from(max_total);
 
     // Smallest window first, so a partition that cannot use its full share
     // hands the surplus to partitions that can, instead of the share being
     // rounded away.
-    let mut by_window: Vec<(i32, i64)> =
-        windows.iter().map(|(&partition, &window)| (partition, window.max(0))).collect();
+    let mut by_window: Vec<(i32, i64)> = windows
+        .iter()
+        .map(|(&partition, &window)| (partition, window.max(0)))
+        .collect();
     by_window.sort_by_key(|&(partition, window)| (window, partition));
 
     let mut sharers = by_window.len() as i64;
@@ -123,7 +126,9 @@ pub fn distribute_total_budget(
             if remaining <= 0 {
                 break;
             }
-            let taken = allocated.get_mut(partition).expect("every partition was seeded above");
+            let taken = allocated
+                .get_mut(partition)
+                .expect("every partition was seeded above");
             if *taken < *window {
                 *taken += 1;
                 remaining -= 1;
@@ -264,8 +269,10 @@ pub fn fetch_shard_count(partitions_with_work: usize, max_message_size_bytes: u3
     partitions_with_work.min(MAX_FETCH_SHARDS).min(affordable)
 }
 
-
-pub fn combined_start_offset(explicit_offset: Option<i64>, from_timestamp_offset: Option<i64>) -> Option<i64> {
+pub fn combined_start_offset(
+    explicit_offset: Option<i64>,
+    from_timestamp_offset: Option<i64>,
+) -> Option<i64> {
     match (explicit_offset, from_timestamp_offset) {
         (Some(a), Some(b)) => Some(a.max(b)),
         (Some(a), None) => Some(a),
@@ -366,7 +373,10 @@ mod tests {
     fn computes_each_partition_independently() {
         let start = map(&[(0, 0), (1, 50)]);
         let end = map(&[(0, 10), (1, 200)]);
-        assert_eq!(partition_limits(&start, &end, Some(20)), map(&[(0, 10), (1, 20)]));
+        assert_eq!(
+            partition_limits(&start, &end, Some(20)),
+            map(&[(0, 10), (1, 20)])
+        );
     }
 
     #[test]
@@ -381,7 +391,10 @@ mod tests {
     #[test]
     fn a_total_budget_is_spread_across_partitions_rather_than_drained_in_order() {
         let windows = map(&[(0, 100), (1, 100)]);
-        assert_eq!(distribute_total_budget(&windows, Some(100)), map(&[(0, 50), (1, 50)]));
+        assert_eq!(
+            distribute_total_budget(&windows, Some(100)),
+            map(&[(0, 50), (1, 50)])
+        );
     }
 
     #[test]
@@ -389,7 +402,10 @@ mod tests {
         // p0 can only give 2, so p1 gets the other 8 rather than the budget
         // being rounded down to 5 each and 3 messages going unread.
         let windows = map(&[(0, 2), (1, 100)]);
-        assert_eq!(distribute_total_budget(&windows, Some(10)), map(&[(0, 2), (1, 8)]));
+        assert_eq!(
+            distribute_total_budget(&windows, Some(10)),
+            map(&[(0, 2), (1, 8)])
+        );
     }
 
     #[test]
@@ -402,7 +418,10 @@ mod tests {
     #[test]
     fn no_partition_is_ever_asked_for_more_than_its_window() {
         let windows = map(&[(0, 3), (1, 4)]);
-        assert_eq!(distribute_total_budget(&windows, Some(1000)), map(&[(0, 3), (1, 4)]));
+        assert_eq!(
+            distribute_total_budget(&windows, Some(1000)),
+            map(&[(0, 3), (1, 4)])
+        );
     }
 
     #[test]
@@ -415,7 +434,10 @@ mod tests {
     #[test]
     fn an_empty_partition_is_allocated_nothing() {
         let windows = map(&[(0, 0), (1, 10)]);
-        assert_eq!(distribute_total_budget(&windows, Some(6)), map(&[(0, 0), (1, 6)]));
+        assert_eq!(
+            distribute_total_budget(&windows, Some(6)),
+            map(&[(0, 0), (1, 6)])
+        );
     }
 
     #[test]
@@ -462,7 +484,10 @@ mod tests {
         // fallback applied downstream, or the identical unbounded-fetch
         // problem resurfaces for it (reported as "the offset filter doesn't
         // seem to work" — in practice, it never finished/returned).
-        assert_eq!(effective_max_messages_per_partition(None), DEFAULT_MESSAGE_CAP);
+        assert_eq!(
+            effective_max_messages_per_partition(None),
+            DEFAULT_MESSAGE_CAP
+        );
     }
 
     #[test]
@@ -551,7 +576,10 @@ mod tests {
 
     #[test]
     fn a_fetch_that_keeps_payloads_is_charged_for_them() {
-        assert_eq!(budgeted_payload_bytes(4 * 1024 * 1024, true), 4 * 1024 * 1024);
+        assert_eq!(
+            budgeted_payload_bytes(4 * 1024 * 1024, true),
+            4 * 1024 * 1024
+        );
         assert_eq!(budgeted_payload_bytes(0, true), 0);
     }
 

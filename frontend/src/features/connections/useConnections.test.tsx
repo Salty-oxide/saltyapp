@@ -17,6 +17,7 @@ import {
   useImportConnections,
   useUpdateConnection,
 } from "./useConnections";
+import { REACHABILITY_POLL_MS, UNREACHABLE_RECHECK_MS } from "./connectionStatusPolling";
 import { sampleNewConnection } from "./connectionTestFixtures";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { useMessageViewerStore } from "../workspace/useMessageViewerStore";
@@ -52,8 +53,20 @@ describe("useUpdateConnection", () => {
 });
 
 describe("statusPollInterval", () => {
-  it("polls a connected cluster on the responsive cadence", () => {
-    expect(statusPollInterval(true)).toBe(CONNECTED_STATUS_POLL_MS);
+  it("polls a healthy connected cluster on the slow steady cadence", () => {
+    expect(statusPollInterval(true, "REACHABLE")).toBe(REACHABILITY_POLL_MS);
+    expect(statusPollInterval(true)).toBe(REACHABILITY_POLL_MS);
+  });
+
+  it("rechecks a connected cluster quickly once it has failed a probe", () => {
+    expect(statusPollInterval(true, "UNREACHABLE")).toBe(UNREACHABLE_RECHECK_MS);
+  });
+
+  // The in-process reads (`connection-connected`, `connection-auth-block`)
+  // stay on the 10s cadence: they cost no socket, and the auth breaker can
+  // trip at any time.
+  it("keeps the in-process reads on their own 10s cadence", () => {
+    expect(CONNECTED_STATUS_POLL_MS).toBe(10_000);
   });
 
   // Every saved connection polls for as long as the app is open, connected or
@@ -62,7 +75,7 @@ describe("statusPollInterval", () => {
   // while actively using none of them.
   it("backs off substantially for a cluster the user is not connected to", () => {
     expect(statusPollInterval(false)).toBe(IDLE_STATUS_POLL_MS);
-    expect(IDLE_STATUS_POLL_MS).toBeGreaterThan(CONNECTED_STATUS_POLL_MS);
+    expect(IDLE_STATUS_POLL_MS).toBeGreaterThan(REACHABILITY_POLL_MS);
   });
 
   it("still checks an idle connection often enough to be useful", () => {
@@ -100,6 +113,81 @@ describe("useConnectionStatus", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(checkStatus).not.toHaveBeenCalled();
     expect(result.current.data).toBe("UNKNOWN");
+  });
+
+  function clientWrapper(client: QueryClient) {
+    return ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+  }
+
+  // Real traffic is proof of life: a topic listing that just succeeded says
+  // the cluster answered, so a TCP probe on top of it is a wasted socket.
+  it("skips the probe when a request to the cluster just succeeded", async () => {
+    const checkStatus = vi.fn(() => "UNREACHABLE");
+    setInvokeHandlers({ connection_check_status: checkStatus });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["topics", "1"], []);
+
+    const { result } = renderHook(() => useConnectionStatus("1", true), { wrapper: clientWrapper(client) });
+
+    await waitFor(() => expect(result.current.data).toBe("REACHABLE"));
+    expect(checkStatus).not.toHaveBeenCalled();
+  });
+
+  it("probes for real when there has been no recent traffic", async () => {
+    const checkStatus = vi.fn(() => "REACHABLE");
+    setInvokeHandlers({ connection_check_status: checkStatus });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    renderHook(() => useConnectionStatus("1", true), { wrapper: clientWrapper(client) });
+
+    await waitFor(() => expect(checkStatus).toHaveBeenCalledTimes(1));
+  });
+
+  // A confirmation of a failure must be a genuine check, or recent cached
+  // traffic could mask a cluster that has since died.
+  it("never skips the probe while the last result was UNREACHABLE", async () => {
+    const checkStatus = vi.fn(() => "UNREACHABLE");
+    setInvokeHandlers({ connection_check_status: checkStatus });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["connection-status", "1"], "UNREACHABLE");
+    client.setQueryData(["topics", "1"], []);
+
+    renderHook(() => useConnectionStatus("1", true), { wrapper: clientWrapper(client) });
+
+    await waitFor(() => expect(checkStatus).toHaveBeenCalledTimes(1));
+  });
+
+  // The app's own failed request is the earliest signal that something is
+  // wrong; confirm it now instead of waiting out the steady interval.
+  it("probes immediately when a request to the cluster fails", async () => {
+    const checkStatus = vi.fn(() => "UNREACHABLE");
+    setInvokeHandlers({ connection_check_status: checkStatus });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderHook(() => useConnectionStatus("1", true), { wrapper: clientWrapper(client) });
+    await waitFor(() => expect(checkStatus).toHaveBeenCalledTimes(1));
+
+    await client
+      .fetchQuery({ queryKey: ["topics", "1"], queryFn: () => Promise.reject(new Error("timed out")), retry: false })
+      .catch(() => undefined);
+
+    await waitFor(() => expect(checkStatus).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not probe because a different cluster's request failed", async () => {
+    const checkStatus = vi.fn(() => "REACHABLE");
+    setInvokeHandlers({ connection_check_status: checkStatus });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderHook(() => useConnectionStatus("1", true), { wrapper: clientWrapper(client) });
+    await waitFor(() => expect(checkStatus).toHaveBeenCalledTimes(1));
+
+    await client
+      .fetchQuery({ queryKey: ["topics", "2"], queryFn: () => Promise.reject(new Error("x")), retry: false })
+      .catch(() => undefined);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(checkStatus).toHaveBeenCalledTimes(1);
   });
 
   it("reports UNKNOWN before the first check resolves", () => {

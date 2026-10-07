@@ -17,8 +17,8 @@
 //! ```
 
 use std::collections::BTreeSet;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
@@ -29,11 +29,16 @@ const DEFAULT_TOPIC: &str = "big-2mb";
 /// Overridable so the same measurement can be pointed at a real topic
 /// shape, e.g. a 100-message browse of a 600k-message topic.
 fn budget() -> u32 {
-    std::env::var("SALTY_E2E_BUDGET").ok().and_then(|v| v.parse().ok()).unwrap_or(20)
+    std::env::var("SALTY_E2E_BUDGET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20)
 }
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn topic() -> String {
@@ -102,7 +107,10 @@ async fn an_overall_budget_reads_only_what_it_returns() {
     let topic = topic();
 
     let mut timings = Vec::new();
-    for (label, max_total) in [("with an overall budget", Some(budget())), ("no budget (the old default)", None)] {
+    for (label, max_total) in [
+        ("with an overall budget", Some(budget())),
+        ("no budget (the old default)", None),
+    ] {
         let started = Instant::now();
         let fetched = client
             .fetch_messages(
@@ -122,7 +130,12 @@ async fn an_overall_budget_reads_only_what_it_returns() {
         let bytes: usize = fetched
             .messages
             .iter()
-            .map(|m| m.payload_base64.as_ref().map(|p| p.len() * 3 / 4).unwrap_or(0))
+            .map(|m| {
+                m.payload_base64
+                    .as_ref()
+                    .map(|p| p.len() * 3 / 4)
+                    .unwrap_or(0)
+            })
             .sum();
         let partitions: BTreeSet<i32> = fetched.messages.iter().map(|m| m.partition).collect();
 
@@ -136,12 +149,15 @@ async fn an_overall_budget_reads_only_what_it_returns() {
         timings.push((fetched.messages.len(), bytes, elapsed, partitions));
     }
 
-    let (budgeted_count, budgeted_bytes, budgeted_elapsed, budgeted_partitions) = timings[0].clone();
+    let (budgeted_count, budgeted_bytes, budgeted_elapsed, budgeted_partitions) =
+        timings[0].clone();
     let (_unbudgeted_count, unbudgeted_bytes, _, _) = timings[1].clone();
 
     assert_eq!(
-        budgeted_count, budget() as usize,
-        "a budget of {} should read exactly that many messages, got {budgeted_count}", budget()
+        budgeted_count,
+        budget() as usize,
+        "a budget of {} should read exactly that many messages, got {budgeted_count}",
+        budget()
     );
 
     // The regression that made this tab unusable: the budget used to be

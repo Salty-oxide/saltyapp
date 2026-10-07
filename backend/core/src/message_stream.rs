@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -134,7 +134,10 @@ mod tests {
             let batches = Arc::clone(&self.batches);
             move |batch: Vec<TopicMessage>| {
                 assert!(!batch.is_empty(), "an empty batch is a wasted IPC hop");
-                batches.lock().unwrap().push(batch.iter().map(|m| m.offset).collect());
+                batches
+                    .lock()
+                    .unwrap()
+                    .push(batch.iter().map(|m| m.offset).collect());
             }
         }
 
@@ -171,7 +174,10 @@ mod tests {
 
         assert_eq!(emitted, 10);
         // 4 + 4 + the remaining 2 as the tail.
-        assert_eq!(collector.batches(), vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7], vec![8, 9]]);
+        assert_eq!(
+            collector.batches(),
+            vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7], vec![8, 9]]
+        );
     }
 
     #[tokio::test]
@@ -183,8 +189,16 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::new(AtomicBool::new(false)), 64, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::new(AtomicBool::new(false)),
+            64,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 1000);
         assert_eq!(collector.offsets(), (0..1000).collect::<Vec<_>>());
@@ -202,8 +216,16 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::new(AtomicBool::new(false)), 64, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::new(AtomicBool::new(false)),
+            64,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 7);
         assert_eq!(collector.offsets().len(), 7);
@@ -234,7 +256,11 @@ mod tests {
         tx.send(message(1)).unwrap();
         tokio::time::sleep(Duration::from_millis(120)).await;
         // Still open, so only the interval can have flushed this.
-        assert_eq!(collector.offsets(), vec![1], "a partial batch waited past its interval");
+        assert_eq!(
+            collector.offsets(),
+            vec![1],
+            "a partial batch waited past its interval"
+        );
 
         tx.send(message(2)).unwrap();
         drop(tx);
@@ -254,8 +280,9 @@ mod tests {
         let emitter = collector.emitter();
         let flag = Arc::clone(&cancelled);
 
-        let handle =
-            tokio::spawn(async move { forward_in_batches(rx, flag, 2, NEVER, 0, emitter, |_| {}).await });
+        let handle = tokio::spawn(async move {
+            forward_in_batches(rx, flag, 2, NEVER, 0, emitter, |_| {}).await
+        });
 
         for offset in 0..4 {
             tx.send(message(offset)).unwrap();
@@ -287,8 +314,16 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::new(AtomicBool::new(true)), 2, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::new(AtomicBool::new(true)),
+            2,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 0);
         assert!(collector.batches().is_empty());
@@ -306,8 +341,16 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::clone(&cancelled), 64, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::clone(&cancelled),
+            64,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 0);
         assert!(collector.batches().is_empty());
@@ -346,11 +389,22 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::new(AtomicBool::new(false)), 64, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::new(AtomicBool::new(false)),
+            64,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 0);
-        assert!(collector.batches().is_empty(), "an empty fetch must not send an empty batch");
+        assert!(
+            collector.batches().is_empty(),
+            "an empty fetch must not send an empty batch"
+        );
     }
 
     /// Defensive: a zero batch size must not mean "never full", which would
@@ -363,8 +417,16 @@ mod tests {
         drop(tx);
         let collector = Collector::default();
 
-        let emitted =
-            forward_in_batches(rx, Arc::new(AtomicBool::new(false)), 0, NEVER, 0, collector.emitter(), |_| {}).await;
+        let emitted = forward_in_batches(
+            rx,
+            Arc::new(AtomicBool::new(false)),
+            0,
+            NEVER,
+            0,
+            collector.emitter(),
+            |_| {},
+        )
+        .await;
 
         assert_eq!(emitted, 2);
         assert_eq!(collector.batches(), vec![vec![0], vec![1]]);

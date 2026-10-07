@@ -62,7 +62,10 @@ pub async fn connection_publish_messages(
     if let Some(refusal) = publish_refusal(
         state.connections.is_connected(&id),
         connection.allow_publishing,
-        state.connections.write_denied_reason(&id, &topic).as_deref(),
+        state
+            .connections
+            .write_denied_reason(&id, &topic)
+            .as_deref(),
     ) {
         // Logged as well as returned: a refused write is exactly the kind of
         // thing someone will later want evidence of, and the Logs panel is

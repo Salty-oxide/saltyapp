@@ -146,7 +146,8 @@ mod tests {
     /// working Linux/macOS build produces today.
     #[test]
     fn a_sound_build_is_reported_as_complete() {
-        let good_build = "gzip,snappy,ssl,sasl,regex,lz4,sasl_plain,sasl_scram,plugins,zstd,sasl_oauthbearer";
+        let good_build =
+            "gzip,snappy,ssl,sasl,regex,lz4,sasl_plain,sasl_scram,plugins,zstd,sasl_oauthbearer";
         assert!(missing_from(good_build).is_empty());
     }
 }

@@ -51,7 +51,10 @@ pub struct ConnectionRegistry {
 
 impl ConnectionRegistry {
     pub fn mark_connected(&self, connection_id: &str) {
-        self.connected.lock().unwrap().insert(connection_id.to_string());
+        self.connected
+            .lock()
+            .unwrap()
+            .insert(connection_id.to_string());
     }
 
     pub fn mark_disconnected(&self, connection_id: &str) {
@@ -77,10 +80,12 @@ impl ConnectionRegistry {
     /// live cluster to expand.
     pub fn record_auth_failure(&self, connection_id: &str, reason: &str) {
         let mut failures = self.auth_failures.lock().unwrap();
-        let entry = failures.entry(connection_id.to_string()).or_insert(AuthFailures {
-            attempts: 0,
-            reason: String::new(),
-        });
+        let entry = failures
+            .entry(connection_id.to_string())
+            .or_insert(AuthFailures {
+                attempts: 0,
+                reason: String::new(),
+            });
         entry.attempts = entry.attempts.saturating_add(1);
         entry.reason = reason.to_string();
         let blocked = entry.attempts >= MAX_AUTH_ATTEMPTS;
@@ -134,10 +139,10 @@ impl ConnectionRegistry {
     /// again only asks the cluster to re-run an authorization check and log a
     /// second denial.
     pub fn record_write_denied(&self, connection_id: &str, topic: &str, reason: &str) {
-        self.write_denials
-            .lock()
-            .unwrap()
-            .insert((connection_id.to_string(), topic.to_string()), reason.to_string());
+        self.write_denials.lock().unwrap().insert(
+            (connection_id.to_string(), topic.to_string()),
+            reason.to_string(),
+        );
     }
 
     /// Why publishing to this topic is being refused without contacting the
@@ -423,5 +428,4 @@ mod tests {
         }
         assert_eq!(registry.write_denied_reason("conn-1", "orders"), None);
     }
-
 }

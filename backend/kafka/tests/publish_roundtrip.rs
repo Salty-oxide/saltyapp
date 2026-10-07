@@ -17,15 +17,15 @@
 //!   cargo test -p salty-kafka --test publish_roundtrip
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use salty_core::{
-    encode_messages, Connection, MessageFilter, NewPublishMessage, PayloadEncoding, PublishField,
-    PublishHeaderInput, PublishLimits, SecurityProtocol, TopicMessage,
+    Connection, MessageFilter, NewPublishMessage, PayloadEncoding, PublishField,
+    PublishHeaderInput, PublishLimits, SecurityProtocol, TopicMessage, encode_messages,
 };
 use salty_kafka::{KafkaClient, RdKafkaClient};
 
@@ -117,8 +117,11 @@ async fn publish(
     partition: i32,
     messages: &[NewPublishMessage],
 ) -> salty_core::PublishOutcome {
-    let records = encode_messages(messages, &PublishLimits::for_max_message_size(MAX_MESSAGE_SIZE))
-        .expect("the fixtures in this file are all valid");
+    let records = encode_messages(
+        messages,
+        &PublishLimits::for_max_message_size(MAX_MESSAGE_SIZE),
+    )
+    .expect("the fixtures in this file are all valid");
     client
         .publish_messages(
             connection,
@@ -167,10 +170,11 @@ fn payload_of(message: &TopicMessage) -> Vec<u8> {
 }
 
 fn key_of(message: &TopicMessage) -> Option<Vec<u8>> {
-    message
-        .key_base64
-        .as_deref()
-        .map(|key| BASE64.decode(key).expect("a key this test published is valid base64"))
+    message.key_base64.as_deref().map(|key| {
+        BASE64
+            .decode(key)
+            .expect("a key this test published is valid base64")
+    })
 }
 
 #[tokio::test]
@@ -194,7 +198,11 @@ async fn three_distinct_messages_land_in_the_chosen_partition_in_order() {
     // Every record went to the partition that was asked for, not wherever the
     // key hashed to — the whole point of a partition-targeted publish.
     for delivered in &outcome.delivered {
-        assert_eq!(delivered.partition, 1, "record {} went elsewhere", delivered.index);
+        assert_eq!(
+            delivered.partition, 1,
+            "record {} went elsewhere",
+            delivered.index
+        );
     }
 
     // Offsets increase with the batch order, and each is reported against the
@@ -304,7 +312,11 @@ async fn binary_payloads_and_headers_survive_the_round_trip() {
         .find(|message| key_of(message).as_deref() == Some(run.as_bytes()))
         .expect("the message should be readable back");
 
-    assert_eq!(payload_of(ours), payload, "binary payload was altered in flight");
+    assert_eq!(
+        payload_of(ours),
+        payload,
+        "binary payload was altered in flight"
+    );
 
     let header_value = |name: &str| {
         ours.headers
@@ -430,7 +442,10 @@ async fn publishing_to_an_unknown_topic_fails_and_does_not_create_it() {
         .await
         .expect("a rejected publish is an outcome, not an error");
 
-    assert!(outcome.delivered.is_empty(), "nothing can have been published");
+    assert!(
+        outcome.delivered.is_empty(),
+        "nothing can have been published"
+    );
     assert!(outcome.failure.is_some());
 
     // The topic must not exist afterwards. `allow.auto.create.topics=false` in
@@ -486,7 +501,10 @@ async fn a_partial_publish_reports_exactly_which_messages_landed() {
         "only the first message should have landed: {outcome:?}"
     );
     assert_eq!(outcome.delivered[0].index, 0);
-    let failure = outcome.failure.as_ref().expect("message 2 must have failed");
+    let failure = outcome
+        .failure
+        .as_ref()
+        .expect("message 2 must have failed");
     assert_eq!(failure.index, 1);
     assert_eq!(
         outcome.not_attempted, 1,

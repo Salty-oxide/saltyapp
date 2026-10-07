@@ -3,9 +3,11 @@ pub mod tabs;
 pub mod topic_schemas;
 
 use error_stack::ResultExt;
-use salty_core::Result;
 use salty_core::AppError;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
+use salty_core::Result;
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use std::str::FromStr;
 
 /// Opens the app's SQLite database, applying the two settings that decide
@@ -70,7 +72,9 @@ mod tests {
     /// first query, in whichever feature happened to run first.
     #[tokio::test]
     async fn init_pool_opens_a_database_and_runs_every_migration() {
-        let pool = init_pool("sqlite::memory:").await.expect("init_pool failed");
+        let pool = init_pool("sqlite::memory:")
+            .await
+            .expect("init_pool failed");
 
         // The tables the migrations create, one per feature area that stores
         // anything — queried rather than merely listed, so a table that
@@ -103,7 +107,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("failed to read journal_mode");
-        assert_eq!(journal_mode.to_lowercase(), "wal", "a writer would otherwise block every reader");
+        assert_eq!(
+            journal_mode.to_lowercase(),
+            "wal",
+            "a writer would otherwise block every reader"
+        );
 
         // 1 is NORMAL; 2 (the default this replaces) is FULL.
         let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
@@ -142,7 +150,9 @@ mod tests {
             .expect("failed to write to the legacy database");
         legacy.close().await;
 
-        let pool = init_pool(&url).await.expect("init_pool failed on a rollback-mode database");
+        let pool = init_pool(&url)
+            .await
+            .expect("init_pool failed on a rollback-mode database");
 
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
             .fetch_one(&pool)
@@ -169,7 +179,9 @@ mod tests {
         let url = format!("sqlite://{}?mode=rwc", dir.join("app.db").display());
 
         init_pool(&url).await.expect("first init_pool failed");
-        init_pool(&url).await.expect("second init_pool failed on an already-migrated database");
+        init_pool(&url)
+            .await
+            .expect("second init_pool failed on an already-migrated database");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -183,6 +195,9 @@ mod tests {
             .await
             .expect_err("opening a database under a missing directory must fail");
 
-        assert!(matches!(error.current_context(), AppError::Db), "got {error:?}");
+        assert!(
+            matches!(error.current_context(), AppError::Db),
+            "got {error:?}"
+        );
     }
 }

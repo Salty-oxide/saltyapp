@@ -9,13 +9,13 @@
 pub mod wire;
 
 use error_stack::{Report, ResultExt};
-use salty_core::Result;
-use std::sync::{Mutex, OnceLock};
-use salty_core::AppError;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, SerializeOptions};
-use protox::file::{ChainFileResolver, File, FileResolver, GoogleFileResolver};
 use protox::Compiler;
+use protox::file::{ChainFileResolver, File, FileResolver, GoogleFileResolver};
+use salty_core::AppError;
+use salty_core::Result;
 use serde::Serialize;
+use std::sync::{Mutex, OnceLock};
 
 /// The name a pasted schema is compiled under.
 ///
@@ -124,7 +124,11 @@ pub fn decide_decode_strategy(
 ) -> ProtobufDecodeStrategy {
     let header = detect_confluent_header(bytes);
     let (body_offset, message_index, schema_id) = match &header {
-        Some(header) => (header.body_offset, header.message_index.clone(), Some(header.schema_id)),
+        Some(header) => (
+            header.body_offset,
+            header.message_index.clone(),
+            Some(header.schema_id),
+        ),
         // No header: the payload is a bare message, and a manual schema
         // describes it from byte zero.
         None => (0, vec![0], None),
@@ -294,7 +298,9 @@ fn message_at(pool: &DescriptorPool, index: &[i32]) -> Result<MessageDescriptor,
     let file = pool
         .files()
         .find(|file| file.name() == SCHEMA_FILE_NAME)
-        .ok_or_else(|| Report::new(AppError::Decode).attach("the schema file went missing after compiling"))?;
+        .ok_or_else(|| {
+            Report::new(AppError::Decode).attach("the schema file went missing after compiling")
+        })?;
 
     let mut messages: Vec<MessageDescriptor> = file.messages().collect();
     let mut current: Option<MessageDescriptor> = None;
@@ -313,7 +319,9 @@ fn message_at(pool: &DescriptorPool, index: &[i32]) -> Result<MessageDescriptor,
         current = Some(message);
     }
 
-    current.ok_or_else(|| Report::new(AppError::Decode).attach("the .proto schema declares no messages"))
+    current.ok_or_else(|| {
+        Report::new(AppError::Decode).attach("the .proto schema declares no messages")
+    })
 }
 
 /// Decodes `bytes` against `proto_text`, returning JSON the existing tree
@@ -396,9 +404,7 @@ fn resolve_message(
 ) -> Result<MessageDescriptor, AppError> {
     match message_at(pool, message_index) {
         Ok(descriptor) => Ok(descriptor),
-        Err(report) if source == ProtobufSchemaSource::Manual => {
-            sole_message(pool).ok_or(report)
-        }
+        Err(report) if source == ProtobufSchemaSource::Manual => sole_message(pool).ok_or(report),
         Err(report) => Err(report),
     }
 }
@@ -531,7 +537,9 @@ mod tests {
             let bytes = confluent_framed(5, &[0x00], &encoded_order("ORD-1", 1));
 
             match decide_decode_strategy(&bytes, true, false) {
-                ProtobufDecodeStrategy::ManualSchema { body_offset, .. } => assert_eq!(body_offset, 6),
+                ProtobufDecodeStrategy::ManualSchema { body_offset, .. } => {
+                    assert_eq!(body_offset, 6)
+                }
                 other => panic!("expected ManualSchema, got {other:?}"),
             }
         }
@@ -539,7 +547,9 @@ mod tests {
         #[test]
         fn a_bare_message_with_a_manual_schema_is_decoded_from_byte_zero() {
             match decide_decode_strategy(&encoded_order("ORD-1", 1), true, false) {
-                ProtobufDecodeStrategy::ManualSchema { body_offset, .. } => assert_eq!(body_offset, 0),
+                ProtobufDecodeStrategy::ManualSchema { body_offset, .. } => {
+                    assert_eq!(body_offset, 0)
+                }
                 other => panic!("expected ManualSchema, got {other:?}"),
             }
         }
@@ -583,7 +593,13 @@ mod tests {
 
         #[test]
         fn decodes_a_message_with_its_schema() {
-            let decoded = decode(&encoded_order("ORD-42", 3), ORDER_PROTO, &[0], ProtobufSchemaSource::Manual).unwrap();
+            let decoded = decode(
+                &encoded_order("ORD-42", 3),
+                ORDER_PROTO,
+                &[0],
+                ProtobufSchemaSource::Manual,
+            )
+            .unwrap();
 
             assert_eq!(decoded.value["order_id"], "ORD-42");
             assert_eq!(decoded.value["quantity"], 3);
@@ -594,7 +610,13 @@ mod tests {
         /// the screen makes the schema and the payload disagree.
         #[test]
         fn keeps_the_field_names_the_schema_declares() {
-            let decoded = decode(&encoded_order("ORD-42", 3), ORDER_PROTO, &[0], ProtobufSchemaSource::Manual).unwrap();
+            let decoded = decode(
+                &encoded_order("ORD-42", 3),
+                ORDER_PROTO,
+                &[0],
+                ProtobufSchemaSource::Manual,
+            )
+            .unwrap();
 
             assert!(decoded.value.get("order_id").is_some());
             assert!(decoded.value.get("orderId").is_none());
@@ -617,7 +639,8 @@ mod tests {
             let mut bytes = vec![0x0a, 0x05];
             bytes.extend_from_slice(b"SKU-1");
 
-            let decoded = decode(&bytes, ORDER_PROTO, &[0, 0], ProtobufSchemaSource::Manual).unwrap();
+            let decoded =
+                decode(&bytes, ORDER_PROTO, &[0, 0], ProtobufSchemaSource::Manual).unwrap();
 
             assert_eq!(decoded.message_type.as_deref(), Some("shop.Order.Line"));
             assert_eq!(decoded.value["sku"], "SKU-1");
@@ -627,7 +650,13 @@ mod tests {
         /// a topic pointed at the wrong schema looks like.
         #[test]
         fn reports_an_index_the_schema_does_not_have() {
-            let error = decode(&encoded_order("ORD-1", 1), ORDER_PROTO, &[9], ProtobufSchemaSource::Manual).unwrap_err();
+            let error = decode(
+                &encoded_order("ORD-1", 1),
+                ORDER_PROTO,
+                &[9],
+                ProtobufSchemaSource::Manual,
+            )
+            .unwrap_err();
 
             assert!(format!("{error:?}").contains("message index 9"));
         }
@@ -635,7 +664,13 @@ mod tests {
         #[test]
         fn reports_a_payload_that_does_not_match_the_schema() {
             // Wire type 3 (start group) is not something this schema has.
-            let error = decode(&[0xff, 0xff, 0xff], ORDER_PROTO, &[0], ProtobufSchemaSource::Manual).unwrap_err();
+            let error = decode(
+                &[0xff, 0xff, 0xff],
+                ORDER_PROTO,
+                &[0],
+                ProtobufSchemaSource::Manual,
+            )
+            .unwrap_err();
 
             assert!(format!("{error:?}").contains("does not match"));
         }
@@ -672,7 +707,10 @@ mod tests {
                 message Event { google.protobuf.Timestamp at = 1; }
             "#;
 
-            assert!(validate_schema(proto).is_ok(), "well-known imports should resolve");
+            assert!(
+                validate_schema(proto).is_ok(),
+                "well-known imports should resolve"
+            );
         }
     }
 
@@ -713,7 +751,9 @@ mod tests {
         #[test]
         fn annotates_a_varint_too_large_for_a_json_number() {
             // Field 2, varint, all ones: -1 as an int64.
-            let bytes = vec![0x10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+            let bytes = vec![
+                0x10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+            ];
 
             let decoded = decode_without_schema(&bytes).unwrap();
 
@@ -850,7 +890,8 @@ mod cache_tests {
     #[test]
     fn a_changed_schema_is_compiled_again() {
         let first = compile(r#"syntax = "proto3"; message A { string a = 1; }"#).unwrap();
-        let second = compile(r#"syntax = "proto3"; message A { string a = 1; int32 b = 2; }"#).unwrap();
+        let second =
+            compile(r#"syntax = "proto3"; message A { string a = 1; int32 b = 2; }"#).unwrap();
 
         let fields = |pool: &DescriptorPool| {
             pool.files()
@@ -868,10 +909,16 @@ mod cache_tests {
     #[test]
     fn is_bounded() {
         for i in 0..(SCHEMA_CACHE_ENTRIES * 3) {
-            compile(&format!(r#"syntax = "proto3"; message M{i} {{ string a = 1; }}"#)).unwrap();
+            compile(&format!(
+                r#"syntax = "proto3"; message M{i} {{ string a = 1; }}"#
+            ))
+            .unwrap();
         }
 
-        let held = schema_cache().lock().unwrap_or_else(|err| err.into_inner()).len();
+        let held = schema_cache()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .len();
         assert!(held <= SCHEMA_CACHE_ENTRIES, "cache held {held} entries");
     }
 

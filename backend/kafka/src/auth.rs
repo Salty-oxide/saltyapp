@@ -1,5 +1,5 @@
-use salty_core::is_auth_failure_reason;
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
+use salty_core::is_auth_failure_reason;
 
 /// Whether a librdkafka failure means "these credentials were rejected"
 /// rather than "the broker was momentarily unreachable".
@@ -48,7 +48,8 @@ mod tests {
         // password as a generic transport failure, and only the `error`
         // callback's reason names the real cause.
         let err = KafkaError::MetadataFetch(RDKafkaErrorCode::BrokerTransportFailure);
-        let reason = "SASL authentication error: Authentication failed: Invalid username or password";
+        let reason =
+            "SASL authentication error: Authentication failed: Invalid username or password";
         assert!(is_auth_failure(Some(&err), Some(reason)));
     }
 

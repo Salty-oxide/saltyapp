@@ -122,7 +122,10 @@ fn main() {
                 logging::emit_log(
                     &handle,
                     "info",
-                    format!("Application started in {} ms", started.elapsed().as_millis()),
+                    format!(
+                        "Application started in {} ms",
+                        started.elapsed().as_millis()
+                    ),
                 );
 
                 // After the pool is up, so the line lands in a Logs panel the
@@ -156,7 +159,10 @@ fn main() {
                 logging::emit_log(
                     &handle,
                     "info",
-                    format!("Broker connections identify as client.id={}", salty_kafka::broker_client_id()),
+                    format!(
+                        "Broker connections identify as client.id={}",
+                        salty_kafka::broker_client_id()
+                    ),
                 );
 
                 // Enumerating the OS trust store is the one fixed cost every
@@ -167,7 +173,10 @@ fn main() {
                 logging::emit_log(
                     &handle,
                     "info",
-                    format!("Loaded the OS trust store in {} ms", ca_started.elapsed().as_millis()),
+                    format!(
+                        "Loaded the OS trust store in {} ms",
+                        ca_started.elapsed().as_millis()
+                    ),
                 );
 
                 // Which compression codecs work is fixed at compile time

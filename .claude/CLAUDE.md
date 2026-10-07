@@ -144,6 +144,63 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   the implication expansion (`Read`/`Write`/`Delete`/`Alter` ⇒ `Describe`,
   `AlterConfigs` ⇒ `DescribeConfigs`) applies when looking for an *allow* and
   never to a *deny*, so a `Deny Read` does not deny `Describe`.
+- **A connected cluster's status dot is answered by the pooled client, not by
+  dialling the broker.** `RdKafkaClient::check_status` reads librdkafka's
+  statistics (`statistics.interval.ms`, set only on the pooled metadata client)
+  through `ObservedClient::liveness_status` — an IPC call and **no traffic to the
+  cluster** — and only falls back to the old TCP connect when no pooled client
+  exists (it never builds one for the purpose). The verdict is a *duration*, in
+  `salty_core::LivenessTracker`: measured against a real broker, a broker's
+  idle-close (`connections.max.idle.ms`) and a dead broker look identical for the
+  first seconds (`AllBrokersDown`, state `INIT`), and only the length of the gap
+  tells them apart, so "no broker `UP` for `LIVENESS_GRACE_MS`" is unreachable
+  and anything shorter is `Unknown`. A successful pooled request also counts as
+  an `UP` sighting. Statistics are only delivered while the queue is served, so
+  `liveness_status` polls it (bounded, and it never waits on the error slot — a
+  slow request holds that for its whole timeout); that is why the interval is a
+  slow 5 s — an unpolled client queues one report per interval. **`poll(ZERO)`
+  serves one event and returns `None` whether it consumed a report or found the
+  queue empty**, so the drain counts what the callbacks served
+  (`events_served`) instead of stopping at the first `None`; stopping there
+  passed every test polling faster than the reports arrive and disconnected a
+  healthy idle cluster about 35 s after Connect at the app's real 10 s cadence
+  (`an_idle_connected_cluster_stays_reachable_at_the_apps_polling_cadence`). The frontend skips the call
+  entirely when a cluster-data query just succeeded
+  (`connectionStatusPolling.ts`) and re-probes at once when one fails.
+- **Pooled Kafka clients expire when nobody asks for them.** `RdKafkaClient`
+  stamps each pooled metadata/admin client with `last_used_ms` (a request, or the
+  status poll's `existing_metadata_client`, counts as use) and a task started on
+  first pooling closes any unused for `IDLE_CLIENT_TTL` (5 min, swept every 30 s;
+  it holds only `Weak` references, so it ends with the client). It exists because
+  nothing in the backend checks `is_connected` before building a client — a late
+  request after Disconnect recreates one — and librdkafka re-dials rejected
+  credentials every 30 s for as long as the client lives (measured: failed logins
+  at 0, 2, 11, 37 s … on a SASL broker). A connected cluster is polled every 10 s
+  so is never reaped; a hidden window stops polling and its client closes after
+  the TTL, rebuilding lazily on return. Deliberately **not** done instead: making
+  every request refuse to build a client unless Connect ran — `connection_update`
+  releases the client but leaves the cluster registered as connected, relying on
+  that lazy rebuild, and a dozen e2e files list topics without connecting.
+- **The fetch path asks the pooled client for the topic's partition list with a
+  3 s deadline, and replaces the client if that times out** (`with_stale_connection_retry`,
+  `STALE_PROBE_TIMEOUT`). That call deliberately goes to the long-lived pooled client
+  (~12 ms) rather than the fetch's own consumer (~500 ms, queued behind a group
+  coordinator query). The cost of that choice: after a pause a NAT, load balancer or
+  firewall can silently forget the pooled client's flow, so the client believes it is
+  connected and the call waits out the whole read timeout — "click a message after
+  being idle for a couple of minutes does nothing; a second try works". Reproduced
+  with a proxy that goes silent on idle flows: 15.4 s then failure, twice in a row;
+  now 3.8 s then success. Only a *timeout* triggers the replacement, and the retry
+  gets the rest of the same budget, so a cluster that is really down is reported no
+  later than before. The tree's listings (brokers, topics, consumer groups,
+  partitions, message count, group lag) cannot use their own call as the probe — all
+  topics on a big cluster can honestly take longer than 3 s — so `live_metadata_client`
+  first sends a one-topic metadata request (`LIVENESS_PROBE_TOPIC`) to a client whose
+  last *answered* request is over `STALE_IDLE_AFTER` (20 s) old. That clock is
+  `last_success_ms`, deliberately not the liveness tracker or the status poll: a
+  connection a NAT has dropped still looks `UP` in every statistics report. Measured
+  through the same silent-drop proxy: every listing 15.3 s then failure, twice in a row,
+  before; 3.8 s then success, then ~2 ms, after.
 - `rdkafka` uses librdkafka's default vendored build (`configure && make`) on macOS/Linux, and the `cmake-build` feature (CMake + MSVC) on Windows — see `backend/kafka/Cargo.toml`.
 - **The fetch path uses `BaseConsumer` inside `spawn_blocking`, not
   `StreamConsumer`, and that is deliberate.** rdkafka's `tokio` feature *is*

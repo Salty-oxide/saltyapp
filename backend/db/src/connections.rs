@@ -2,8 +2,8 @@ use chrono::Utc;
 use error_stack::ResultExt;
 use salty_core::Result;
 use salty_core::{AppError, Connection, NewConnection, SaslMechanism, SecurityProtocol};
-use sqlx::sqlite::SqlitePool;
 use sqlx::FromRow;
+use sqlx::sqlite::SqlitePool;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -172,16 +172,23 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Connection, AppError> {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Connection>, AppError> {
-    let rows = sqlx::query_as::<_, ConnectionRow>("SELECT * FROM connections ORDER BY created_at ASC")
-        .fetch_all(pool)
-        .await
-        .change_context(AppError::Db)
-        .attach("failed to list connections")?;
+    let rows =
+        sqlx::query_as::<_, ConnectionRow>("SELECT * FROM connections ORDER BY created_at ASC")
+            .fetch_all(pool)
+            .await
+            .change_context(AppError::Db)
+            .attach("failed to list connections")?;
 
-    rows.into_iter().map(ConnectionRow::into_connection).collect()
+    rows.into_iter()
+        .map(ConnectionRow::into_connection)
+        .collect()
 }
 
-pub async fn update(pool: &SqlitePool, id: &str, new_conn: &NewConnection) -> Result<Connection, AppError> {
+pub async fn update(
+    pool: &SqlitePool,
+    id: &str,
+    new_conn: &NewConnection,
+) -> Result<Connection, AppError> {
     let now = Utc::now().to_rfc3339();
     let security_protocol = new_conn.security_protocol.to_string();
     let sasl_mechanism = new_conn.sasl_mechanism.map(|m| m.to_string());
@@ -355,10 +362,22 @@ mod tests {
             created.schema_registry_endpoint.as_deref(),
             Some("https://schema-registry.local")
         );
-        assert_eq!(created.schema_registry_trust_store_location.as_deref(), Some("/etc/ts.jks"));
-        assert_eq!(created.schema_registry_keystore_location.as_deref(), Some("/etc/ks.jks"));
-        assert_eq!(created.ssl_truststore_location.as_deref(), Some("/etc/broker-ts.pem"));
-        assert_eq!(created.ssl_keystore_location.as_deref(), Some("/etc/broker-ks.p12"));
+        assert_eq!(
+            created.schema_registry_trust_store_location.as_deref(),
+            Some("/etc/ts.jks")
+        );
+        assert_eq!(
+            created.schema_registry_keystore_location.as_deref(),
+            Some("/etc/ks.jks")
+        );
+        assert_eq!(
+            created.ssl_truststore_location.as_deref(),
+            Some("/etc/broker-ts.pem")
+        );
+        assert_eq!(
+            created.ssl_keystore_location.as_deref(),
+            Some("/etc/broker-ks.p12")
+        );
 
         let fetched = get(&pool, &created.id).await.unwrap();
         assert_eq!(fetched, created);
@@ -377,7 +396,10 @@ mod tests {
 
         let created = create(&pool, &new_conn).await.unwrap();
 
-        assert_eq!(created.ksqldb_endpoint.as_deref(), Some("http://localhost:8088"));
+        assert_eq!(
+            created.ksqldb_endpoint.as_deref(),
+            Some("http://localhost:8088")
+        );
         assert_eq!(
             created.ksqldb_basic_auth_credentials.as_deref(),
             Some("ksql-user:ksql-pass")
@@ -399,7 +421,10 @@ mod tests {
         let updated = update(&pool, &created.id, &new_conn).await.unwrap();
 
         assert_eq!(updated.ksqldb_endpoint.as_deref(), Some("http://ksql:8088"));
-        assert_eq!(updated.ksqldb_basic_auth_credentials.as_deref(), Some("u:p"));
+        assert_eq!(
+            updated.ksqldb_basic_auth_credentials.as_deref(),
+            Some("u:p")
+        );
         // `id` is bound at ?27 while the new columns are ?28/?29; if that
         // ordering were wrong the update would hit the wrong row or none.
         assert_eq!(updated.id, created.id);
@@ -446,15 +471,30 @@ mod tests {
             created.schema_registry_basic_auth_credentials.as_deref(),
             Some("user:pass")
         );
-        assert_eq!(created.schema_registry_trust_store_password.as_deref(), Some("ts-secret"));
-        assert_eq!(created.schema_registry_keystore_password.as_deref(), Some("ks-secret"));
+        assert_eq!(
+            created.schema_registry_trust_store_password.as_deref(),
+            Some("ts-secret")
+        );
+        assert_eq!(
+            created.schema_registry_keystore_password.as_deref(),
+            Some("ks-secret")
+        );
         assert_eq!(
             created.schema_registry_keystore_key_password.as_deref(),
             Some("ks-key-secret")
         );
-        assert_eq!(created.ssl_truststore_password.as_deref(), Some("broker-ts-secret"));
-        assert_eq!(created.ssl_keystore_password.as_deref(), Some("broker-ks-secret"));
-        assert_eq!(created.ssl_keystore_key_password.as_deref(), Some("broker-ks-key-secret"));
+        assert_eq!(
+            created.ssl_truststore_password.as_deref(),
+            Some("broker-ts-secret")
+        );
+        assert_eq!(
+            created.ssl_keystore_password.as_deref(),
+            Some("broker-ks-secret")
+        );
+        assert_eq!(
+            created.ssl_keystore_key_password.as_deref(),
+            Some("broker-ks-key-secret")
+        );
 
         let fetched = get(&pool, &created.id).await.unwrap();
         assert_eq!(fetched, created);
@@ -464,7 +504,9 @@ mod tests {
     async fn lists_connections_in_creation_order() {
         let pool = test_pool().await;
         create(&pool, &plaintext_connection("First")).await.unwrap();
-        create(&pool, &plaintext_connection("Second")).await.unwrap();
+        create(&pool, &plaintext_connection("Second"))
+            .await
+            .unwrap();
 
         let connections = list(&pool).await.unwrap();
         assert_eq!(connections.len(), 2);
@@ -556,10 +598,11 @@ mod tests {
         let mut writable = plaintext_connection("Writable");
         writable.allow_publishing = true;
         let writable = create(&pool, &writable).await.unwrap();
-        let readonly = create(&pool, &plaintext_connection("Readonly")).await.unwrap();
+        let readonly = create(&pool, &plaintext_connection("Readonly"))
+            .await
+            .unwrap();
 
         assert!(get(&pool, &writable.id).await.unwrap().allow_publishing);
         assert!(!get(&pool, &readonly.id).await.unwrap().allow_publishing);
     }
-
 }

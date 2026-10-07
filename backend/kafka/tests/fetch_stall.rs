@@ -41,7 +41,9 @@ const MESSAGES: u32 = 30_000;
 const BUDGET: Duration = Duration::from_secs(3);
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn connection(bootstrap_servers: String) -> Connection {
@@ -151,8 +153,14 @@ async fn a_large_fetch_does_not_stall_on_the_prefetch_queue_backoff() {
         return;
     };
 
-    println!("metadata-only fetch of {count} messages: {} ms", elapsed.as_millis());
-    assert_eq!(count, MESSAGES as usize, "the fixture topic is not the expected size");
+    println!(
+        "metadata-only fetch of {count} messages: {} ms",
+        elapsed.as_millis()
+    );
+    assert_eq!(
+        count, MESSAGES as usize,
+        "the fixture topic is not the expected size"
+    );
     assert!(
         elapsed < BUDGET,
         "fetching {count} messages took {} ms. Each whole second in that figure is one \
@@ -172,7 +180,10 @@ async fn the_same_holds_when_payloads_are_fetched() {
         return;
     };
 
-    println!("payload fetch of {count} messages: {} ms", elapsed.as_millis());
+    println!(
+        "payload fetch of {count} messages: {} ms",
+        elapsed.as_millis()
+    );
     assert!(
         elapsed < BUDGET,
         "fetching {count} messages with payloads took {} ms",
@@ -268,7 +279,10 @@ async fn repeated_small_browses_do_not_pay_a_coordinator_query_each() {
     }
     let elapsed = started.elapsed();
 
-    println!("five 100-message browses: {} ms each={each:?}", elapsed.as_millis());
+    println!(
+        "five 100-message browses: {} ms each={each:?}",
+        elapsed.as_millis()
+    );
     assert!(
         elapsed < Duration::from_millis(250),
         "five 100-message browses took {} ms; each should be ~10. Both costs this guards are \

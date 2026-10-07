@@ -6,9 +6,13 @@
 //! logic-free is what lets `src-tauri` stay outside the coverage ratio
 //! without leaving anything untested — see the Conventions in CLAUDE.md.
 
-use super::connections::{connection_for_request, log_broker_call, record_auth_success_only, CommandError};
+use super::connections::{
+    connection_for_request, log_broker_call, record_auth_success_only, CommandError,
+};
 use crate::state::AppState;
-use salty_core::{resource_access, AclFilter, AclListing, AclOperation, ResourceAccess, ResourceType};
+use salty_core::{
+    resource_access, AclFilter, AclListing, AclOperation, ResourceAccess, ResourceType,
+};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 
@@ -25,7 +29,11 @@ pub async fn acl_list(
     let started = std::time::Instant::now();
     let result = state
         .kafka
-        .describe_acls(&connection, AclFilter::any(), Duration::from_millis(read_timeout_ms))
+        .describe_acls(
+            &connection,
+            AclFilter::any(),
+            Duration::from_millis(read_timeout_ms),
+        )
         .await;
     // The success-only breaker, for exactly the reason it exists for the
     // consumer-group calls: listing ACLs needs `Describe` on `Cluster`, so a
@@ -34,7 +42,12 @@ pub async fn acl_list(
     // failure would take a working cluster offline inside the app over a
     // capability the user may never have needed.
     record_auth_success_only(&state, &id, &result);
-    log_broker_call(&app, "Listing ACLs", started, if result.is_ok() { "finished" } else { "failed" });
+    log_broker_call(
+        &app,
+        "Listing ACLs",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
     Ok(result?)
 }
 
