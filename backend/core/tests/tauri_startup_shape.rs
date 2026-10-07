@@ -11,7 +11,7 @@
 //! Keep this in step with `main.rs` by hand. The sibling
 //! `tauri_error_shape.rs` exists for the same reason.
 
-use salty_core::{adopt_legacy_app_data, DB_FILE};
+use salty_core::{DB_FILE, adopt_legacy_app_data};
 
 /// Stands in for `logging::emit_log`, whose real signature is
 /// `(&AppHandle, &str, impl Into<String>)`.
@@ -54,7 +54,10 @@ fn the_startup_block_still_typechecks() {
     }
     // --- end mirror ---
 
-    assert!(database_url.contains(DB_FILE), "the app must open the current database file");
+    assert!(
+        database_url.contains(DB_FILE),
+        "the app must open the current database file"
+    );
     std::fs::remove_dir_all(&data_dir).ok();
 }
 

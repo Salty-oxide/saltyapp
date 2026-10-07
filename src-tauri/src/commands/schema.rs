@@ -33,7 +33,10 @@ pub async fn topic_schema_set(
         "protobuf" => salty_protobuf::validate_schema(&schema_text)?,
         _ => {}
     }
-    Ok(salty_db::topic_schemas::set(&state.pool, &connection_id, &topic, &format, &schema_text).await?)
+    Ok(
+        salty_db::topic_schemas::set(&state.pool, &connection_id, &topic, &format, &schema_text)
+            .await?,
+    )
 }
 
 #[tauri::command]
@@ -100,30 +103,32 @@ pub async fn connection_decode_avro(
         NeedsRegistrySchema { bytes: Vec<u8>, schema_id: u32 },
     }
 
-    let outcome = tokio::task::spawn_blocking(
-        move || -> Result<DecodeOutcome, Report<AppError>> {
-            let strategy =
-                salty_avro::decide_decode_strategy(&bytes, manual_schema.is_some(), has_registry_endpoint)
-                    .map_err(|refusal| Report::new(AppError::Decode).attach(refusal.message()))?;
+    let outcome =
+        tokio::task::spawn_blocking(move || -> Result<DecodeOutcome, Report<AppError>> {
+            let strategy = salty_avro::decide_decode_strategy(
+                &bytes,
+                manual_schema.is_some(),
+                has_registry_endpoint,
+            )
+            .map_err(|refusal| Report::new(AppError::Decode).attach(refusal.message()))?;
 
             match strategy {
-                salty_avro::AvroDecodeStrategy::ContainerFile => {
-                    Ok(DecodeOutcome::Decoded(salty_avro::decode_container(&bytes)?))
-                }
+                salty_avro::AvroDecodeStrategy::ContainerFile => Ok(DecodeOutcome::Decoded(
+                    salty_avro::decode_container(&bytes)?,
+                )),
                 salty_avro::AvroDecodeStrategy::ManualSchema => {
-                    let schema =
-                        manual_schema.expect("the strategy is only chosen when a manual schema exists");
+                    let schema = manual_schema
+                        .expect("the strategy is only chosen when a manual schema exists");
                     Ok(DecodeOutcome::Decoded(salty_avro::decode(&bytes, &schema)?))
                 }
                 salty_avro::AvroDecodeStrategy::SchemaRegistry { schema_id } => {
                     Ok(DecodeOutcome::NeedsRegistrySchema { bytes, schema_id })
                 }
             }
-        },
-    )
-    .await
-    .change_context(AppError::Decode)
-    .attach("avro decode task panicked")??;
+        })
+        .await
+        .change_context(AppError::Decode)
+        .attach("avro decode task panicked")??;
 
     let (bytes, schema_id) = match outcome {
         DecodeOutcome::Decoded(value) => return Ok(value),
@@ -149,19 +154,19 @@ pub async fn connection_decode_avro(
     let client = state.schema_registry.get_or_create(&id, endpoint, auth)?;
     let schema_text = client.fetch_schema_by_id(schema_id).await?;
 
-    let value = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, Report<AppError>> {
-        // The 5-byte Confluent header (magic byte + schema id) is what
-        // `decide_decode_strategy` matched on; the record itself starts after
-        // it.
-        Ok(salty_avro::decode(&bytes[5..], &schema_text)?)
-    })
-    .await
-    .change_context(AppError::Decode)
-    .attach("avro decode task panicked")??;
+    let value =
+        tokio::task::spawn_blocking(move || -> Result<serde_json::Value, Report<AppError>> {
+            // The 5-byte Confluent header (magic byte + schema id) is what
+            // `decide_decode_strategy` matched on; the record itself starts after
+            // it.
+            Ok(salty_avro::decode(&bytes[5..], &schema_text)?)
+        })
+        .await
+        .change_context(AppError::Decode)
+        .attach("avro decode task panicked")??;
 
     Ok(value)
 }
-
 
 /// Backs the payload viewer's "Protobuf" mode.
 ///
@@ -205,8 +210,11 @@ pub async fn connection_decode_protobuf(
     let connection = salty_db::connections::get(&state.pool, &id).await?;
     let has_registry_endpoint = connection.schema_registry_endpoint.is_some();
 
-    let strategy =
-        salty_protobuf::decide_decode_strategy(&bytes, manual_schema.is_some(), has_registry_endpoint);
+    let strategy = salty_protobuf::decide_decode_strategy(
+        &bytes,
+        manual_schema.is_some(),
+        has_registry_endpoint,
+    );
 
     let (body_offset, message_index, schema_id) = match strategy {
         salty_protobuf::ProtobufDecodeStrategy::RawFields { body_offset } => {
@@ -221,7 +229,8 @@ pub async fn connection_decode_protobuf(
             body_offset,
             message_index,
         } => {
-            let schema = manual_schema.expect("the strategy is only chosen when a manual schema exists");
+            let schema =
+                manual_schema.expect("the strategy is only chosen when a manual schema exists");
             return Ok(tokio::task::spawn_blocking(move || {
                 salty_protobuf::decode(
                     &bytes[body_offset..],

@@ -23,7 +23,9 @@ use salty_kafka::{BrokerSslConfig, KafkaClient, RdKafkaClient};
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 macro_rules! broker {
@@ -59,7 +61,10 @@ async fn reports_the_fixture_broker_as_kraft() {
     let report = detect(&bootstrap).await;
 
     assert_eq!(report.mode, MetadataMode::Kraft, "report was: {report:?}");
-    let roles = report.process_roles.as_deref().expect("process.roles should be readable");
+    let roles = report
+        .process_roles
+        .as_deref()
+        .expect("process.roles should be readable");
     assert!(!roles.trim().is_empty(), "process.roles was: {roles:?}");
 }
 
@@ -74,9 +79,17 @@ async fn suggests_a_version_the_dropdown_can_hold() {
         .expect("the broker should report inter.broker.protocol.version");
     // Shaped like the dropdown's values — `major.minor`, digits only, no
     // `-IVn` suffix left on it.
-    let (major, minor) = suggested.split_once('.').expect("suggested version should be major.minor");
-    assert!(major.chars().all(|c| c.is_ascii_digit()), "suggested was: {suggested}");
-    assert!(minor.chars().all(|c| c.is_ascii_digit()), "suggested was: {suggested}");
+    let (major, minor) = suggested
+        .split_once('.')
+        .expect("suggested version should be major.minor");
+    assert!(
+        major.chars().all(|c| c.is_ascii_digit()),
+        "suggested was: {suggested}"
+    );
+    assert!(
+        minor.chars().all(|c| c.is_ascii_digit()),
+        "suggested was: {suggested}"
+    );
 }
 
 #[tokio::test]
@@ -84,6 +97,8 @@ async fn a_kraft_report_flags_its_version_as_derived() {
     let bootstrap = broker!();
     let report = detect(&bootstrap).await;
 
-    let note = report.note.expect("a kraft report with a version must carry a note");
+    let note = report
+        .note
+        .expect("a kraft report with a version must carry a note");
     assert!(note.contains("metadata.version"), "note was: {note}");
 }

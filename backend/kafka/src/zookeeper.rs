@@ -56,7 +56,9 @@ mod tests {
     #[tokio::test]
     async fn reports_unreachable_for_an_unresolvable_host() {
         let client = TcpZookeeperClient;
-        let status = client.ping("this-host-does-not-resolve.invalid", 2181, 10_000).await;
+        let status = client
+            .ping("this-host-does-not-resolve.invalid", 2181, 10_000)
+            .await;
         assert_eq!(status, ConnectionStatus::Unreachable);
     }
 

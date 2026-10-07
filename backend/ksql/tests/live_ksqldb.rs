@@ -19,21 +19,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use salty_ksql::{parse_streams, stream_for_topic, KsqlClient, KsqlEndpoint};
+use salty_ksql::{KsqlClient, KsqlEndpoint, parse_streams, stream_for_topic};
 
 /// Created by `scripts/e2e-ksql-fixtures.sh` over the `e2e-basic` topic.
 const STREAM: &str = "E2E_BASIC_STREAM";
 const TOPIC: &str = "e2e-basic";
 
 fn ksql_url() -> Option<String> {
-    std::env::var("SALTY_E2E_KSQL_URL").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_KSQL_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 macro_rules! ksql {
     () => {
         match ksql_url() {
-            Some(url) => KsqlClient::new(KsqlEndpoint { url, basic_auth: None })
-                .expect("should build a client"),
+            Some(url) => KsqlClient::new(KsqlEndpoint {
+                url,
+                basic_auth: None,
+            })
+            .expect("should build a client"),
             None => {
                 eprintln!(
                     "skipped: run ./scripts/e2e-ksql-fixtures.sh and set \
@@ -51,7 +56,10 @@ macro_rules! ksql {
 async fn lists_the_streams_the_server_knows_about() {
     let client = ksql!();
 
-    let body = client.statement("LIST STREAMS;").await.expect("should list streams");
+    let body = client
+        .statement("LIST STREAMS;")
+        .await
+        .expect("should list streams");
     let streams = parse_streams(&body);
 
     assert!(
@@ -160,7 +168,10 @@ async fn streams_the_rows_of_a_bounded_push_query() {
         "LIMIT 5 over 3 partitions should yield 5 rows, or a little over — got {}",
         rows.len()
     );
-    assert!(!outcome.cancelled, "a LIMIT query ends by itself, not by Stop");
+    assert!(
+        !outcome.cancelled,
+        "a LIMIT query ends by itself, not by Stop"
+    );
     // Each row should have one value per column.
     let width = outcome.header.expect("header").columns.len();
     for row in &rows {
@@ -231,5 +242,8 @@ async fn describes_an_existing_stream() {
         .await
         .expect("should describe");
 
-    assert!(body.contains(STREAM), "the description should name the stream");
+    assert!(
+        body.contains(STREAM),
+        "the description should name the stream"
+    );
 }

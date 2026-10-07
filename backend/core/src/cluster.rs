@@ -75,21 +75,31 @@ mod tests {
 
     #[test]
     fn broker_summary_serializes_fields_as_camel_case() {
-        let broker = BrokerSummary { id: 1, host: "broker1".into(), port: 9092 };
+        let broker = BrokerSummary {
+            id: 1,
+            host: "broker1".into(),
+            port: 9092,
+        };
         let json = serde_json::to_string(&broker).unwrap();
         assert_eq!(json, r#"{"id":1,"host":"broker1","port":9092}"#);
     }
 
     #[test]
     fn topic_summary_serializes_fields_as_camel_case() {
-        let topic = TopicSummary { name: "orders".into(), partition_count: 6 };
+        let topic = TopicSummary {
+            name: "orders".into(),
+            partition_count: 6,
+        };
         let json = serde_json::to_string(&topic).unwrap();
         assert_eq!(json, r#"{"name":"orders","partitionCount":6}"#);
     }
 
     #[test]
     fn consumer_group_summary_serializes_fields_as_camel_case() {
-        let group = ConsumerGroupSummary { group_id: "billing".into(), state: "Stable".into() };
+        let group = ConsumerGroupSummary {
+            group_id: "billing".into(),
+            state: "Stable".into(),
+        };
         let json = serde_json::to_string(&group).unwrap();
         assert_eq!(json, r#"{"groupId":"billing","state":"Stable"}"#);
     }
@@ -113,7 +123,10 @@ mod tests {
 
     #[test]
     fn config_entry_serializes_fields_as_camel_case() {
-        let entry = ConfigEntry { name: "retention.ms".into(), value: Some("604800000".into()) };
+        let entry = ConfigEntry {
+            name: "retention.ms".into(),
+            value: Some("604800000".into()),
+        };
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(json, r#"{"name":"retention.ms","value":"604800000"}"#);
     }
@@ -155,7 +168,10 @@ mod tests {
 
     #[test]
     fn consumer_group_lag_serializes_fields_as_camel_case() {
-        let group_lag = ConsumerGroupLag { state: "Stable".into(), partitions: vec![] };
+        let group_lag = ConsumerGroupLag {
+            state: "Stable".into(),
+            partitions: vec![],
+        };
         let json = serde_json::to_string(&group_lag).unwrap();
         assert_eq!(json, r#"{"state":"Stable","partitions":[]}"#);
     }

@@ -1,7 +1,7 @@
 //! The HTTP half: talking to a ksqlDB server.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use error_stack::Report;
@@ -9,8 +9,8 @@ use futures_util::StreamExt;
 use salty_core::{AppError, Result};
 
 use crate::protocol::{
-    parse_header, parse_row, parse_server_error, parse_streams, stream_for_topic, KsqlQueryHeader,
-    KsqlRow,
+    KsqlQueryHeader, KsqlRow, parse_header, parse_row, parse_server_error, parse_streams,
+    stream_for_topic,
 };
 
 /// Where a ksqlDB server is, and how to authenticate to it.
@@ -27,7 +27,11 @@ pub struct KsqlEndpoint {
 impl KsqlEndpoint {
     /// Joins a path onto the base URL without doubling or dropping the slash.
     fn endpoint(&self, path: &str) -> String {
-        format!("{}/{}", self.url.trim_end_matches('/'), path.trim_start_matches('/'))
+        format!(
+            "{}/{}",
+            self.url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        )
     }
 }
 
@@ -59,7 +63,8 @@ impl KsqlClient {
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|err| {
-                Report::new(AppError::Validation).attach(format!("could not build an HTTP client: {err}"))
+                Report::new(AppError::Validation)
+                    .attach(format!("could not build an HTTP client: {err}"))
             })?;
         Ok(KsqlClient { http, endpoint })
     }
@@ -116,10 +121,10 @@ impl KsqlClient {
         if !response.status().is_success() {
             return Err(Self::server_error("ksqlDB rejected the statement", response).await);
         }
-        response
-            .text()
-            .await
-            .map_err(|err| Report::new(AppError::Kafka).attach(format!("could not read the ksqlDB response: {err}")))
+        response.text().await.map_err(|err| {
+            Report::new(AppError::Kafka)
+                .attach(format!("could not read the ksqlDB response: {err}"))
+        })
     }
 
     /// The stream registered over `topic`, if any.
@@ -245,7 +250,10 @@ impl KsqlClient {
             }
         }
 
-        Ok(KsqlStreamOutcome { header, cancelled: was_cancelled })
+        Ok(KsqlStreamOutcome {
+            header,
+            cancelled: was_cancelled,
+        })
     }
 
     /// Asks the server to release a push query.
@@ -263,7 +271,8 @@ impl KsqlClient {
             .send()
             .await
             .map_err(|err| {
-                Report::new(AppError::Kafka).attach(format!("could not reach ksqlDB to close the query: {err}"))
+                Report::new(AppError::Kafka)
+                    .attach(format!("could not reach ksqlDB to close the query: {err}"))
             })?;
 
         if !response.status().is_success() {
@@ -278,7 +287,10 @@ mod tests {
     use super::*;
 
     fn endpoint(url: &str) -> KsqlEndpoint {
-        KsqlEndpoint { url: url.into(), basic_auth: None }
+        KsqlEndpoint {
+            url: url.into(),
+            basic_auth: None,
+        }
     }
 
     #[test]
@@ -319,7 +331,10 @@ mod tests {
     async fn reports_an_unreachable_server_without_blaming_credentials() {
         let client = KsqlClient::new(endpoint("http://127.0.0.1:1")).expect("client");
 
-        let error = client.statement("SHOW STREAMS;").await.expect_err("should fail");
+        let error = client
+            .statement("SHOW STREAMS;")
+            .await
+            .expect_err("should fail");
 
         assert!(matches!(error.current_context(), AppError::Kafka));
     }
@@ -346,6 +361,11 @@ mod tests {
 
         // Still an error, because the connection itself fails — the point is
         // that it returns rather than blocking.
-        assert!(client.query_stream("SELECT 1;", cancelled, |_| {}, |_| {}).await.is_err());
+        assert!(
+            client
+                .query_stream("SELECT 1;", cancelled, |_| {}, |_| {})
+                .await
+                .is_err()
+        );
     }
 }

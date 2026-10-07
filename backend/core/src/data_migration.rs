@@ -92,7 +92,10 @@ pub fn adopt_legacy_app_data(data_dir: &Path) -> std::io::Result<Option<AdoptedD
     std::fs::rename(&partial, &destination)?;
     files.push(file_name_of(&destination));
 
-    Ok(Some(AdoptedData { from: legacy_dir, files }))
+    Ok(Some(AdoptedData {
+        from: legacy_dir,
+        files,
+    }))
 }
 
 /// The old identifier's directory, as a sibling of the current one.
@@ -116,7 +119,9 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn file_name_of(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -154,11 +159,16 @@ mod tests {
         let (root, current, legacy) = identifiers("adopts");
         write(&legacy.join(LEGACY_DB_FILE), "the user's connections");
 
-        let adopted = adopt_legacy_app_data(&current).unwrap().expect("should have migrated");
+        let adopted = adopt_legacy_app_data(&current)
+            .unwrap()
+            .expect("should have migrated");
 
         assert_eq!(adopted.from, legacy);
         assert_eq!(adopted.files, vec![DB_FILE.to_string()]);
-        assert_eq!(std::fs::read_to_string(current.join(DB_FILE)).unwrap(), "the user's connections");
+        assert_eq!(
+            std::fs::read_to_string(current.join(DB_FILE)).unwrap(),
+            "the user's connections"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -169,17 +179,32 @@ mod tests {
     fn brings_the_write_ahead_log_along_with_the_database() {
         let (root, current, legacy) = identifiers("wal");
         write(&legacy.join(LEGACY_DB_FILE), "main");
-        write(&legacy.join(format!("{LEGACY_DB_FILE}-wal")), "recent commits");
-        write(&legacy.join(format!("{LEGACY_DB_FILE}-shm")), "shared memory");
+        write(
+            &legacy.join(format!("{LEGACY_DB_FILE}-wal")),
+            "recent commits",
+        );
+        write(
+            &legacy.join(format!("{LEGACY_DB_FILE}-shm")),
+            "shared memory",
+        );
 
-        let adopted = adopt_legacy_app_data(&current).unwrap().expect("should have migrated");
+        let adopted = adopt_legacy_app_data(&current)
+            .unwrap()
+            .expect("should have migrated");
 
         assert_eq!(
             adopted.files,
-            vec![format!("{DB_FILE}-wal"), format!("{DB_FILE}-shm"), DB_FILE.to_string()],
+            vec![
+                format!("{DB_FILE}-wal"),
+                format!("{DB_FILE}-shm"),
+                DB_FILE.to_string()
+            ],
             "the database must be written last, so an interrupted copy is retried"
         );
-        assert_eq!(std::fs::read_to_string(current.join(format!("{DB_FILE}-wal"))).unwrap(), "recent commits");
+        assert_eq!(
+            std::fs::read_to_string(current.join(format!("{DB_FILE}-wal"))).unwrap(),
+            "recent commits"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -225,7 +250,10 @@ mod tests {
 
         adopt_legacy_app_data(&current).unwrap().unwrap();
 
-        assert_eq!(std::fs::read_to_string(legacy.join(LEGACY_DB_FILE)).unwrap(), "the user's connections");
+        assert_eq!(
+            std::fs::read_to_string(legacy.join(LEGACY_DB_FILE)).unwrap(),
+            "the user's connections"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 

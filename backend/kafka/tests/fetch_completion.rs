@@ -30,8 +30,8 @@
 //!   cargo test -p salty-kafka --test fetch_completion -- --nocapture
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
@@ -48,7 +48,9 @@ const TOPIC: &str = "perf-txn";
 const BUDGET: Duration = Duration::from_secs(1);
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn connection(bootstrap_servers: String) -> Connection {
@@ -86,13 +88,19 @@ fn connection(bootstrap_servers: String) -> Connection {
     }
 }
 
-async fn timed_fetch(topic: &str, filter: MessageFilter) -> Option<(Duration, usize, Option<String>)> {
+async fn timed_fetch(
+    topic: &str,
+    filter: MessageFilter,
+) -> Option<(Duration, usize, Option<String>)> {
     let bootstrap = bootstrap_servers()?;
     let client = RdKafkaClient::new();
     let connection = connection(bootstrap);
     // The app reaches a Data tab through the tree, which lists topics first,
     // so the pooled metadata client is warm by the time Fetch is clicked.
-    client.list_topics(&connection, Duration::from_secs(30)).await.expect("list_topics failed");
+    client
+        .list_topics(&connection, Duration::from_secs(30))
+        .await
+        .expect("list_topics failed");
 
     let started = Instant::now();
     let result = client
@@ -132,7 +140,10 @@ async fn a_newest_first_browse_of_a_transactional_topic_finishes_promptly() {
         return;
     };
 
-    println!("newest-100 browse of {TOPIC}: {count} messages in {} ms", elapsed.as_millis());
+    println!(
+        "newest-100 browse of {TOPIC}: {count} messages in {} ms",
+        elapsed.as_millis()
+    );
     assert!(count > 0, "the fixture topic is empty");
     assert!(
         elapsed < BUDGET,
@@ -143,7 +154,10 @@ async fn a_newest_first_browse_of_a_transactional_topic_finishes_promptly() {
     );
     // Reaching the end of a partition is how this fetch finishes; it is not
     // something to report to the user as a failed read.
-    assert_eq!(poll_error, None, "partition EOF leaked into the user-visible poll error");
+    assert_eq!(
+        poll_error, None,
+        "partition EOF leaked into the user-visible poll error"
+    );
 }
 
 /// The whole topic, where the shortfall is the same but the fetch has real
@@ -156,7 +170,10 @@ async fn draining_a_transactional_topic_stops_at_the_end_of_the_data() {
         return;
     };
 
-    println!("full drain of {TOPIC}: {count} messages in {} ms", elapsed.as_millis());
+    println!(
+        "full drain of {TOPIC}: {count} messages in {} ms",
+        elapsed.as_millis()
+    );
     assert_eq!(count, 10_000, "the fixture topic is not the expected size");
     assert!(
         elapsed < BUDGET,
@@ -164,7 +181,10 @@ async fn draining_a_transactional_topic_stops_at_the_end_of_the_data() {
          make `high - low` larger than the number of messages that can be collected.",
         elapsed.as_millis(),
     );
-    assert_eq!(poll_error, None, "partition EOF leaked into the user-visible poll error");
+    assert_eq!(
+        poll_error, None,
+        "partition EOF leaked into the user-visible poll error"
+    );
 }
 
 /// The negative control for the two above: the same shapes against a topic
@@ -177,7 +197,14 @@ async fn an_ordinary_topic_still_returns_every_message_it_should() {
         return;
     };
 
-    println!("full drain of perf-probe: {count} messages in {} ms", elapsed.as_millis());
+    println!(
+        "full drain of perf-probe: {count} messages in {} ms",
+        elapsed.as_millis()
+    );
     assert_eq!(count, 30_000, "an ordinary fetch lost messages");
-    assert!(elapsed < Duration::from_secs(3), "took {} ms", elapsed.as_millis());
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "took {} ms",
+        elapsed.as_millis()
+    );
 }

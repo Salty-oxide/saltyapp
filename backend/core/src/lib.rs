@@ -1,6 +1,7 @@
 mod acl;
 mod acl_effective;
 mod auth;
+mod broker_liveness;
 mod cluster;
 mod cluster_mode;
 mod connection;
@@ -18,35 +19,43 @@ pub use acl::{
     ResourceType,
 };
 pub use acl_effective::{
-    effective, principals, resource_access, OperationVerdict, PrincipalAccess, ResourceAccess,
-    Verdict, VerdictReason, WILDCARD_PRINCIPAL,
+    OperationVerdict, PrincipalAccess, ResourceAccess, Verdict, VerdictReason, WILDCARD_PRINCIPAL,
+    effective, principals, resource_access,
+};
+pub use auth::is_auth_failure_reason;
+pub use broker_liveness::{
+    INTERVAL_SLACK_MS, LIVENESS_GRACE_MS, LivenessTracker, STATS_INTERVAL_MS, broker_state_is_up,
 };
 pub use cluster::{
     BrokerSummary, ConfigEntry, ConsumerGroupLag, ConsumerGroupSummary, PartitionLag,
     PartitionSummary, TopicSummary,
 };
 pub use cluster_mode::{
-    cluster_version_report, ClusterVersionReport, MetadataMode, INTER_BROKER_PROTOCOL_VERSION_CONFIG,
-    PROCESS_ROLES_CONFIG,
-};
-pub use message::{MessageFetchResult, MessageFilter, MessageHeader, MessagesBatchEvent, TopicMessage};
-pub use message_stream::forward_in_batches;
-pub use publish::{
-    encode_messages, publish_refusal, DeliveredRecord, EncodedRecord, NewPublishMessage,
-    PayloadEncoding, PublishFailure, PublishFailureKind, PublishField, PublishHeaderInput, PublishLimits,
-    PublishOutcome, PublishRefusal, MAX_PUBLISH_BATCH_BYTES, MAX_PUBLISH_BATCH_MESSAGES,
+    ClusterVersionReport, INTER_BROKER_PROTOCOL_VERSION_CONFIG, MetadataMode, PROCESS_ROLES_CONFIG,
+    cluster_version_report,
 };
 pub use connection::{
     Connection, ConnectionStatus, NewConnection, SaslMechanism, SecurityProtocol,
 };
 pub use connection_export::{
-    partition_importable, select_for_export, ConnectionExportFile, PortableConnection,
-    CURRENT_EXPORT_VERSION,
+    CURRENT_EXPORT_VERSION, ConnectionExportFile, PortableConnection, partition_importable,
+    select_for_export,
 };
-pub use data_migration::{adopt_legacy_app_data, AdoptedData, DB_FILE, LEGACY_DB_FILE, LEGACY_IDENTIFIER};
-pub use auth::is_auth_failure_reason;
-pub use registry::MAX_AUTH_ATTEMPTS;
+pub use data_migration::{
+    AdoptedData, DB_FILE, LEGACY_DB_FILE, LEGACY_IDENTIFIER, adopt_legacy_app_data,
+};
 pub use error::AppError;
+pub use message::{
+    MessageFetchResult, MessageFilter, MessageHeader, MessagesBatchEvent, TopicMessage,
+};
+pub use message_stream::forward_in_batches;
+pub use publish::{
+    DeliveredRecord, EncodedRecord, MAX_PUBLISH_BATCH_BYTES, MAX_PUBLISH_BATCH_MESSAGES,
+    NewPublishMessage, PayloadEncoding, PublishFailure, PublishFailureKind, PublishField,
+    PublishHeaderInput, PublishLimits, PublishOutcome, PublishRefusal, encode_messages,
+    publish_refusal,
+};
+pub use registry::MAX_AUTH_ATTEMPTS;
 
 /// A fallible result carrying an `error_stack::Report`.
 ///

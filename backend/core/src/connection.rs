@@ -185,9 +185,15 @@ impl fmt::Debug for NewConnection {
                 &redacted(&self.schema_registry_keystore_key_password),
             )
             .field("ssl_truststore_location", &self.ssl_truststore_location)
-            .field("ssl_truststore_password", &redacted(&self.ssl_truststore_password))
+            .field(
+                "ssl_truststore_password",
+                &redacted(&self.ssl_truststore_password),
+            )
             .field("ssl_keystore_location", &self.ssl_keystore_location)
-            .field("ssl_keystore_password", &redacted(&self.ssl_keystore_password))
+            .field(
+                "ssl_keystore_password",
+                &redacted(&self.ssl_keystore_password),
+            )
             .field(
                 "ssl_keystore_key_password",
                 &redacted(&self.ssl_keystore_key_password),
@@ -317,7 +323,8 @@ mod tests {
     fn new_connection_debug_output_never_contains_any_of_the_real_secrets() {
         let mut new_connection = sample_new_connection();
         new_connection.sasl_password = Some("sasl-secret".into());
-        new_connection.schema_registry_basic_auth_credentials = Some("user:super-secret-value".into());
+        new_connection.schema_registry_basic_auth_credentials =
+            Some("user:super-secret-value".into());
         new_connection.schema_registry_trust_store_password = Some("trust-store-secret".into());
         new_connection.schema_registry_keystore_password = Some("keystore-secret".into());
         new_connection.schema_registry_keystore_key_password = Some("keystore-key-secret".into());

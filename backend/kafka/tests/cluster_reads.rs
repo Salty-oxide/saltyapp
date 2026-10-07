@@ -15,8 +15,8 @@
 //!   cargo test -p salty-kafka --test cluster_reads
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol, TopicMessage};
@@ -32,7 +32,9 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_MESSAGE_SIZE: u32 = 12 * 1024 * 1024;
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 /// Every test bails out identically without a broker, so the suite stays
@@ -86,10 +88,19 @@ fn connection(bootstrap_servers: String) -> Connection {
 }
 
 fn all_of(topic_filter: MessageFilter) -> MessageFilter {
-    MessageFilter { max_messages_per_partition: Some(500), max_total_messages: Some(500), ..topic_filter }
+    MessageFilter {
+        max_messages_per_partition: Some(500),
+        max_total_messages: Some(500),
+        ..topic_filter
+    }
 }
 
-async fn fetch(client: &RdKafkaClient, connection: &Connection, topic: &str, filter: MessageFilter) -> Vec<TopicMessage> {
+async fn fetch(
+    client: &RdKafkaClient,
+    connection: &Connection,
+    topic: &str,
+    filter: MessageFilter,
+) -> Vec<TopicMessage> {
     client
         .fetch_messages(
             connection,
@@ -111,11 +122,20 @@ async fn list_brokers_returns_the_cluster_the_connection_points_at() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let brokers = client.list_brokers(&connection, READ_TIMEOUT).await.expect("list_brokers failed");
+    let brokers = client
+        .list_brokers(&connection, READ_TIMEOUT)
+        .await
+        .expect("list_brokers failed");
 
-    assert!(!brokers.is_empty(), "a running cluster has at least one broker");
+    assert!(
+        !brokers.is_empty(),
+        "a running cluster has at least one broker"
+    );
     for broker in &brokers {
-        assert!(!broker.host.is_empty(), "every broker reports a host: {broker:?}");
+        assert!(
+            !broker.host.is_empty(),
+            "every broker reports a host: {broker:?}"
+        );
         assert!(broker.port > 0, "every broker reports a port: {broker:?}");
     }
 }
@@ -125,12 +145,20 @@ async fn list_topics_reports_each_topics_partition_count() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let topics = client.list_topics(&connection, READ_TIMEOUT).await.expect("list_topics failed");
+    let topics = client
+        .list_topics(&connection, READ_TIMEOUT)
+        .await
+        .expect("list_topics failed");
 
     let basic = topics
         .iter()
         .find(|topic| topic.name == TOPIC)
-        .unwrap_or_else(|| panic!("fixture topic {TOPIC} missing; got {:?}", topics.iter().map(|t| &t.name).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture topic {TOPIC} missing; got {:?}",
+                topics.iter().map(|t| &t.name).collect::<Vec<_>>()
+            )
+        });
     assert_eq!(basic.partition_count, 3);
 }
 
@@ -139,13 +167,19 @@ async fn list_consumer_groups_includes_a_group_that_has_committed_offsets() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let groups = client.list_consumer_groups(&connection, READ_TIMEOUT).await.expect("list_consumer_groups failed");
+    let groups = client
+        .list_consumer_groups(&connection, READ_TIMEOUT)
+        .await
+        .expect("list_consumer_groups failed");
 
     let group = groups
         .iter()
         .find(|group| group.group_id == GROUP)
         .unwrap_or_else(|| panic!("fixture group {GROUP} missing; got {groups:?}"));
-    assert!(!group.state.is_empty(), "a listed group always carries a state");
+    assert!(
+        !group.state.is_empty(),
+        "a listed group always carries a state"
+    );
 }
 
 /// The count is watermark arithmetic (high - low, summed), not a scan, so it
@@ -155,7 +189,10 @@ async fn count_topic_messages_agrees_with_what_a_full_fetch_returns() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let counted = client.count_topic_messages(&connection, TOPIC, READ_TIMEOUT).await.expect("count failed");
+    let counted = client
+        .count_topic_messages(&connection, TOPIC, READ_TIMEOUT)
+        .await
+        .expect("count failed");
     let fetched = fetch(&client, &connection, TOPIC, MessageFilter::default()).await;
 
     assert!(counted > 0, "the fixture topic is not empty");
@@ -167,15 +204,33 @@ async fn list_partitions_reports_leader_replicas_and_watermarks_for_every_partit
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let mut partitions = client.list_partitions(&connection, TOPIC, READ_TIMEOUT).await.expect("list_partitions failed");
+    let mut partitions = client
+        .list_partitions(&connection, TOPIC, READ_TIMEOUT)
+        .await
+        .expect("list_partitions failed");
     partitions.sort_by_key(|partition| partition.id);
 
-    assert_eq!(partitions.iter().map(|p| p.id).collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(
+        partitions.iter().map(|p| p.id).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
     for partition in &partitions {
-        assert!(partition.replicas.contains(&partition.leader), "the leader is one of the replicas: {partition:?}");
-        assert!(!partition.isr.is_empty(), "a healthy partition has an in-sync replica: {partition:?}");
-        assert!(partition.high_offset >= partition.low_offset, "watermarks are ordered: {partition:?}");
-        assert!(partition.high_offset > 0, "the fixture partitions all hold messages: {partition:?}");
+        assert!(
+            partition.replicas.contains(&partition.leader),
+            "the leader is one of the replicas: {partition:?}"
+        );
+        assert!(
+            !partition.isr.is_empty(),
+            "a healthy partition has an in-sync replica: {partition:?}"
+        );
+        assert!(
+            partition.high_offset >= partition.low_offset,
+            "watermarks are ordered: {partition:?}"
+        );
+        assert!(
+            partition.high_offset > 0,
+            "the fixture partitions all hold messages: {partition:?}"
+        );
     }
 }
 
@@ -184,14 +239,28 @@ async fn describe_topic_config_returns_the_brokers_topic_level_settings() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let config = client.describe_topic_config(&connection, TOPIC, READ_TIMEOUT).await.expect("describe failed");
+    let config = client
+        .describe_topic_config(&connection, TOPIC, READ_TIMEOUT)
+        .await
+        .expect("describe failed");
 
-    assert!(!config.is_empty(), "DescribeConfigs always returns the topic's settings");
+    assert!(
+        !config.is_empty(),
+        "DescribeConfigs always returns the topic's settings"
+    );
     let retention = config
         .iter()
         .find(|entry| entry.name == "cleanup.policy")
-        .unwrap_or_else(|| panic!("cleanup.policy missing from {:?}", config.iter().map(|e| &e.name).collect::<Vec<_>>()));
-    assert!(retention.value.is_some(), "a described setting carries its value");
+        .unwrap_or_else(|| {
+            panic!(
+                "cleanup.policy missing from {:?}",
+                config.iter().map(|e| &e.name).collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        retention.value.is_some(),
+        "a described setting carries its value"
+    );
 }
 
 /// The committed offsets come from a throwaway consumer scoped to the group,
@@ -207,9 +276,15 @@ async fn fetch_consumer_group_lag_subtracts_committed_offsets_from_log_end_offse
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let lag = client.fetch_consumer_group_lag(&connection, LIVE_GROUP, READ_TIMEOUT).await.expect("lag failed");
+    let lag = client
+        .fetch_consumer_group_lag(&connection, LIVE_GROUP, READ_TIMEOUT)
+        .await
+        .expect("lag failed");
 
-    assert!(!lag.state.is_empty(), "the group's state is reported alongside its partitions");
+    assert!(
+        !lag.state.is_empty(),
+        "the group's state is reported alongside its partitions"
+    );
     assert_eq!(
         lag.partitions.len(),
         3,
@@ -218,15 +293,26 @@ async fn fetch_consumer_group_lag_subtracts_committed_offsets_from_log_end_offse
     );
     for partition in &lag.partitions {
         assert_eq!(partition.topic, TOPIC);
-        assert!(partition.log_end_offset > 0, "the fixture partitions all hold messages: {partition:?}");
-        let current = partition.current_offset.expect("the fixture group has committed every partition");
+        assert!(
+            partition.log_end_offset > 0,
+            "the fixture partitions all hold messages: {partition:?}"
+        );
+        let current = partition
+            .current_offset
+            .expect("the fixture group has committed every partition");
         assert_eq!(
             partition.lag,
             Some(partition.log_end_offset - current),
             "lag is log-end minus committed: {partition:?}"
         );
-        assert!(partition.client_id.is_some(), "an assigned partition names its owner: {partition:?}");
-        assert!(partition.client_host.is_some(), "an assigned partition names its owner's host: {partition:?}");
+        assert!(
+            partition.client_id.is_some(),
+            "an assigned partition names its owner: {partition:?}"
+        );
+        assert!(
+            partition.client_host.is_some(),
+            "an assigned partition names its owner's host: {partition:?}"
+        );
     }
 }
 
@@ -249,10 +335,20 @@ async fn an_idle_group_reports_its_state_but_no_partitions() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let lag = client.fetch_consumer_group_lag(&connection, GROUP, READ_TIMEOUT).await.expect("lag failed");
+    let lag = client
+        .fetch_consumer_group_lag(&connection, GROUP, READ_TIMEOUT)
+        .await
+        .expect("lag failed");
 
-    assert_eq!(lag.state, "Empty", "the fixture group has committed offsets but no live member");
-    assert!(lag.partitions.is_empty(), "an idle group's partitions are not reported; got {:?}", lag.partitions);
+    assert_eq!(
+        lag.state, "Empty",
+        "the fixture group has committed offsets but no live member"
+    );
+    assert!(
+        lag.partitions.is_empty(),
+        "an idle group's partitions are not reported; got {:?}",
+        lag.partitions
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -264,12 +360,21 @@ async fn a_partition_filter_returns_only_that_partitions_messages() {
         &client,
         &connection,
         TOPIC,
-        MessageFilter { partitions: Some(vec![1]), ..MessageFilter::default() },
+        MessageFilter {
+            partitions: Some(vec![1]),
+            ..MessageFilter::default()
+        },
     )
     .await;
 
-    assert!(!messages.is_empty(), "partition 1 of the fixture topic is not empty");
-    assert!(messages.iter().all(|message| message.partition == 1), "no other partition leaks in");
+    assert!(
+        !messages.is_empty(),
+        "partition 1 of the fixture topic is not empty"
+    );
+    assert!(
+        messages.iter().all(|message| message.partition == 1),
+        "no other partition leaks in"
+    );
 }
 
 /// The offset filter is clamped to each partition's watermarks rather than
@@ -280,11 +385,29 @@ async fn an_offset_filter_starts_each_partition_at_that_offset() {
     let connection = connection(broker!());
 
     let all = fetch(&client, &connection, TOPIC, MessageFilter::default()).await;
-    let from_five = fetch(&client, &connection, TOPIC, MessageFilter { offset: Some(5), ..MessageFilter::default() }).await;
+    let from_five = fetch(
+        &client,
+        &connection,
+        TOPIC,
+        MessageFilter {
+            offset: Some(5),
+            ..MessageFilter::default()
+        },
+    )
+    .await;
 
-    assert!(!from_five.is_empty(), "the fixture partitions run past offset 5");
-    assert!(from_five.len() < all.len(), "starting at offset 5 skips what came before it");
-    assert!(from_five.iter().all(|message| message.offset >= 5), "nothing before the requested offset is returned");
+    assert!(
+        !from_five.is_empty(),
+        "the fixture partitions run past offset 5"
+    );
+    assert!(
+        from_five.len() < all.len(),
+        "starting at offset 5 skips what came before it"
+    );
+    assert!(
+        from_five.iter().all(|message| message.offset >= 5),
+        "nothing before the requested offset is returned"
+    );
 }
 
 /// `offsets_for_times` resolves each partition independently, and falls back
@@ -300,7 +423,10 @@ async fn a_from_timestamp_before_the_topic_existed_resolves_to_the_whole_topic()
         &client,
         &connection,
         TOPIC,
-        MessageFilter { from_timestamp_ms: Some(1), ..MessageFilter::default() },
+        MessageFilter {
+            from_timestamp_ms: Some(1),
+            ..MessageFilter::default()
+        },
     )
     .await;
 
@@ -329,13 +455,19 @@ async fn a_from_timestamp_in_the_future_matches_nothing() {
         .as_millis() as i64
         + 86_400_000;
     let all = fetch(&client, &connection, TOPIC, MessageFilter::default()).await;
-    assert!(!all.is_empty(), "fixture topic is empty — run scripts/e2e-fixtures.sh");
+    assert!(
+        !all.is_empty(),
+        "fixture topic is empty — run scripts/e2e-fixtures.sh"
+    );
 
     let from_the_future = fetch(
         &client,
         &connection,
         TOPIC,
-        MessageFilter { from_timestamp_ms: Some(far_future), ..MessageFilter::default() },
+        MessageFilter {
+            from_timestamp_ms: Some(far_future),
+            ..MessageFilter::default()
+        },
     )
     .await;
 
@@ -357,11 +489,18 @@ async fn a_to_timestamp_in_the_past_matches_nothing() {
         &client,
         &connection,
         TOPIC,
-        MessageFilter { to_timestamp_ms: Some(1), ..MessageFilter::default() },
+        MessageFilter {
+            to_timestamp_ms: Some(1),
+            ..MessageFilter::default()
+        },
     )
     .await;
 
-    assert!(messages.is_empty(), "nothing was produced before 1970; got {} rows", messages.len());
+    assert!(
+        messages.is_empty(),
+        "nothing was produced before 1970; got {} rows",
+        messages.len()
+    );
 }
 
 /// A message's key and headers travel regardless of the payload checkbox —
@@ -372,21 +511,45 @@ async fn a_metadata_only_fetch_still_carries_keys_headers_and_payload_sizes() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
-    let messages = fetch(&client, &connection, HEADERS_TOPIC, MessageFilter::default()).await;
+    let messages = fetch(
+        &client,
+        &connection,
+        HEADERS_TOPIC,
+        MessageFilter::default(),
+    )
+    .await;
 
     assert_eq!(messages.len(), 2);
     let first = &messages[0];
-    assert!(first.payload_base64.is_none(), "the payload is withheld when it was not asked for");
-    assert_eq!(first.payload_size_bytes, Some("body-1".len() as u64), "its size is reported anyway");
+    assert!(
+        first.payload_base64.is_none(),
+        "the payload is withheld when it was not asked for"
+    );
+    assert_eq!(
+        first.payload_size_bytes,
+        Some("body-1".len() as u64),
+        "its size is reported anyway"
+    );
     assert_eq!(
         first.key_base64.as_deref(),
         Some(base64_of("key-1").as_str()),
         "the key is base64-encoded, not lossy-decoded"
     );
 
-    let headers: Vec<_> = first.headers.iter().map(|header| header.key.as_str()).collect();
-    assert_eq!(headers, vec!["trace-id", "content-type"], "headers keep the order the producer set");
-    assert_eq!(first.headers[0].value_base64.as_deref(), Some(base64_of("abc123").as_str()));
+    let headers: Vec<_> = first
+        .headers
+        .iter()
+        .map(|header| header.key.as_str())
+        .collect();
+    assert_eq!(
+        headers,
+        vec!["trace-id", "content-type"],
+        "headers keep the order the producer set"
+    );
+    assert_eq!(
+        first.headers[0].value_base64.as_deref(),
+        Some(base64_of("abc123").as_str())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -398,11 +561,17 @@ async fn asking_for_payloads_returns_them_base64_encoded() {
         &client,
         &connection,
         HEADERS_TOPIC,
-        MessageFilter { include_payload: true, ..MessageFilter::default() },
+        MessageFilter {
+            include_payload: true,
+            ..MessageFilter::default()
+        },
     )
     .await;
 
-    let bodies: Vec<_> = messages.iter().filter_map(|message| message.payload_base64.as_deref()).collect();
+    let bodies: Vec<_> = messages
+        .iter()
+        .filter_map(|message| message.payload_base64.as_deref())
+        .collect();
     assert_eq!(bodies, vec![base64_of("body-1"), base64_of("body-2")]);
 }
 
@@ -418,13 +587,25 @@ async fn a_payload_preview_bound_truncates_the_payload_but_not_its_reported_size
         &client,
         &connection,
         HEADERS_TOPIC,
-        MessageFilter { include_payload: true, max_payload_preview_bytes: Some(3), ..MessageFilter::default() },
+        MessageFilter {
+            include_payload: true,
+            max_payload_preview_bytes: Some(3),
+            ..MessageFilter::default()
+        },
     )
     .await;
 
     let first = &messages[0];
-    assert_eq!(first.payload_base64.as_deref(), Some(base64_of("bod").as_str()), "only the first 3 bytes travel");
-    assert_eq!(first.payload_size_bytes, Some("body-1".len() as u64), "the true length is still reported");
+    assert_eq!(
+        first.payload_base64.as_deref(),
+        Some(base64_of("bod").as_str()),
+        "only the first 3 bytes travel"
+    );
+    assert_eq!(
+        first.payload_size_bytes,
+        Some("body-1".len() as u64),
+        "the true length is still reported"
+    );
 }
 
 /// The streaming feed and the returned result are the same messages: the
@@ -457,8 +638,15 @@ async fn every_message_is_streamed_as_it_is_polled_as_well_as_returned() {
 
     assert!(!result.messages.is_empty());
     assert_eq!(
-        streamed.iter().map(|m| (m.partition, m.offset)).collect::<std::collections::BTreeSet<_>>(),
-        result.messages.iter().map(|m| (m.partition, m.offset)).collect::<std::collections::BTreeSet<_>>(),
+        streamed
+            .iter()
+            .map(|m| (m.partition, m.offset))
+            .collect::<std::collections::BTreeSet<_>>(),
+        result
+            .messages
+            .iter()
+            .map(|m| (m.partition, m.offset))
+            .collect::<std::collections::BTreeSet<_>>(),
         "the stream and the result describe the same messages"
     );
 }
@@ -484,7 +672,11 @@ async fn an_already_cancelled_fetch_returns_without_reading_the_topic() {
         .await
         .expect("a cancelled fetch is not an error");
 
-    assert!(result.messages.is_empty(), "a cancelled fetch returns no rows; got {}", result.messages.len());
+    assert!(
+        result.messages.is_empty(),
+        "a cancelled fetch returns no rows; got {}",
+        result.messages.len()
+    );
 }
 
 /// `max_total_messages` caps the rows pulled, but `total_matching` reports
@@ -499,7 +691,10 @@ async fn a_message_cap_bounds_the_rows_without_hiding_how_many_matched() {
         .fetch_messages(
             &connection,
             TOPIC,
-            &MessageFilter { max_total_messages: Some(5), ..MessageFilter::default() },
+            &MessageFilter {
+                max_total_messages: Some(5),
+                ..MessageFilter::default()
+            },
             None,
             READ_TIMEOUT,
             MAX_MESSAGE_SIZE,
@@ -510,7 +705,11 @@ async fn a_message_cap_bounds_the_rows_without_hiding_how_many_matched() {
         .expect("fetch failed");
 
     assert_eq!(result.messages.len(), 5);
-    assert!(result.total_matching > 5, "the topic holds more than the cap: {}", result.total_matching);
+    assert!(
+        result.total_matching > 5,
+        "the topic holds more than the cap: {}",
+        result.total_matching
+    );
 }
 
 /// A connect is what promotes a connection to "connected" in the tree, and
@@ -522,17 +721,32 @@ async fn connecting_reports_reachable_and_releasing_drops_the_pooled_client() {
     let connection = connection(broker!());
 
     let status = client.connect(&connection).await.expect("connect failed");
-    assert!(matches!(status, salty_core::ConnectionStatus::Reachable), "got {status:?}");
+    assert!(
+        matches!(status, salty_core::ConnectionStatus::Reachable),
+        "got {status:?}"
+    );
 
-    let checked = client.check_status(&connection).await.expect("check_status failed");
-    assert!(matches!(checked, salty_core::ConnectionStatus::Reachable), "got {checked:?}");
+    let checked = client
+        .check_status(&connection)
+        .await
+        .expect("check_status failed");
+    assert!(
+        matches!(checked, salty_core::ConnectionStatus::Reachable),
+        "got {checked:?}"
+    );
 
     client.release(&connection.id);
 
     // Releasing only drops the pooled client; the cluster is still reachable,
     // so the next request rebuilds one and succeeds.
-    let after_release = client.connect(&connection).await.expect("connect after release failed");
-    assert!(matches!(after_release, salty_core::ConnectionStatus::Reachable), "got {after_release:?}");
+    let after_release = client
+        .connect(&connection)
+        .await
+        .expect("connect after release failed");
+    assert!(
+        matches!(after_release, salty_core::ConnectionStatus::Reachable),
+        "got {after_release:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -552,7 +766,10 @@ async fn test_connection_succeeds_against_a_reachable_cluster() {
         .await
         .expect("test_connection failed");
 
-    assert!(matches!(status, salty_core::ConnectionStatus::Reachable), "got {status:?}");
+    assert!(
+        matches!(status, salty_core::ConnectionStatus::Reachable),
+        "got {status:?}"
+    );
 }
 
 fn base64_of(value: &str) -> String {

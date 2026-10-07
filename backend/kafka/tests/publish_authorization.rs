@@ -18,14 +18,14 @@
 //!   cargo test -p salty-kafka --test publish_authorization
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use salty_core::{
-    encode_messages, AppError, Connection, ConnectionRegistry, MessageFilter, NewPublishMessage,
-    PublishField, PublishFailureKind, PublishLimits, PublishOutcome, PublishRefusal, SaslMechanism,
-    SecurityProtocol,
+    AppError, Connection, ConnectionRegistry, MessageFilter, NewPublishMessage, PublishFailureKind,
+    PublishField, PublishLimits, PublishOutcome, PublishRefusal, SaslMechanism, SecurityProtocol,
+    encode_messages,
 };
 use salty_kafka::{KafkaClient, RdKafkaClient};
 
@@ -237,14 +237,7 @@ async fn a_read_only_principal_is_refused_every_message_of_a_batch() {
     )
     .unwrap();
     let outcome = client
-        .publish_messages(
-            &reader,
-            TOPIC,
-            1,
-            &records,
-            MAX_MESSAGE_SIZE,
-            WRITE_TIMEOUT,
-        )
+        .publish_messages(&reader, TOPIC, 1, &records, MAX_MESSAGE_SIZE, WRITE_TIMEOUT)
         .await
         .expect("a refused publish is an outcome, not an error");
 
@@ -305,8 +298,8 @@ async fn a_principal_with_write_access_publishes_normally() {
             .key_base64
             .as_deref()
             .map(|key| {
-                use base64::engine::general_purpose::STANDARD as BASE64;
                 use base64::Engine;
+                use base64::engine::general_purpose::STANDARD as BASE64;
                 BASE64.decode(key).unwrap() == value.as_bytes()
             })
             .unwrap_or(false)
@@ -328,7 +321,11 @@ async fn a_denial_blocks_the_next_attempt_without_asking_the_broker_again() {
 
     // Nothing is blocked before the first attempt: the app cannot know.
     assert_eq!(
-        salty_core::publish_refusal(true, true, registry.write_denied_reason(&reader.id, TOPIC).as_deref()),
+        salty_core::publish_refusal(
+            true,
+            true,
+            registry.write_denied_reason(&reader.id, TOPIC).as_deref()
+        ),
         None
     );
 
@@ -355,7 +352,9 @@ async fn a_denial_blocks_the_next_attempt_without_asking_the_broker_again() {
         salty_core::publish_refusal(
             true,
             true,
-            registry.write_denied_reason(&reader.id, "some-other-topic").as_deref()
+            registry
+                .write_denied_reason(&reader.id, "some-other-topic")
+                .as_deref()
         ),
         None
     );

@@ -17,8 +17,8 @@
 //!   cargo test -p salty-kafka --test payload_budget -- --nocapture
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
@@ -31,7 +31,9 @@ const DEFAULT_TOPIC: &str = "big-msgs";
 const BUDGET_BYTES: u64 = 2 * 1024 * 1024;
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn topic() -> String {
@@ -151,7 +153,10 @@ async fn the_byte_budget_charges_only_for_payloads_the_fetch_keeps() {
     // Sizes are still reported, which is what the grid shows and what the
     // per-row 'Fetch payload' button is charged for later.
     assert!(
-        browse.messages.iter().all(|m| m.payload_size_bytes.is_some_and(|size| size > 0)),
+        browse
+            .messages
+            .iter()
+            .all(|m| m.payload_size_bytes.is_some_and(|size| size > 0)),
         "a metadata-only browse must still report each message's real size"
     );
 

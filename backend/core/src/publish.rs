@@ -18,9 +18,9 @@
 //! bytes are never trusted — it sends the declared encoding plus the raw text,
 //! and [`encode_messages`] is the only thing that produces bytes.
 
+use crate::Result;
 use base64::Engine;
 use error_stack::Report;
-use crate::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -196,8 +196,7 @@ pub fn encode_messages(
     limits: &PublishLimits,
 ) -> Result<Vec<EncodedRecord>, AppError> {
     if messages.is_empty() {
-        return Err(Report::new(AppError::Validation)
-            .attach("there are no messages to publish"));
+        return Err(Report::new(AppError::Validation).attach("there are no messages to publish"));
     }
     if messages.len() > limits.max_batch_messages {
         return Err(Report::new(AppError::Validation).attach(format!(
@@ -220,9 +219,8 @@ pub fn encode_messages(
         let mut headers = Vec::with_capacity(message.headers.len());
         for header in &message.headers {
             if header.key.trim().is_empty() {
-                return Err(Report::new(AppError::Validation).attach(format!(
-                    "message {position} has a header with no name"
-                )));
+                return Err(Report::new(AppError::Validation)
+                    .attach(format!("message {position} has a header with no name")));
             }
             let bytes = encode_field(
                 &header.value,
@@ -231,7 +229,11 @@ pub fn encode_messages(
             headers.push((header.key.clone(), bytes));
         }
 
-        let record = EncodedRecord { key, value, headers };
+        let record = EncodedRecord {
+            key,
+            value,
+            headers,
+        };
         let size = record.size_bytes();
         if size > u64::from(limits.max_message_size_bytes) {
             return Err(Report::new(AppError::Validation).attach(format!(
@@ -618,7 +620,10 @@ mod tests {
         assert_eq!(
             records[0].headers,
             vec![
-                ("content-type".to_string(), Some(b"application/json".to_vec())),
+                (
+                    "content-type".to_string(),
+                    Some(b"application/json".to_vec())
+                ),
                 ("trace-id".to_string(), Some(vec![0x00, 0x01, 0x02])),
                 ("flag".to_string(), None),
             ]
@@ -689,7 +694,10 @@ mod tests {
     fn a_record_over_max_message_size_is_refused_before_the_broker_sees_it() {
         let limits = PublishLimits::for_max_message_size(16);
         let report = encode_messages(
-            &[message(PublishField::null(), PublishField::text("x".repeat(17)))],
+            &[message(
+                PublishField::null(),
+                PublishField::text("x".repeat(17)),
+            )],
             &limits,
         )
         .expect_err("over the per-message ceiling");
@@ -759,7 +767,10 @@ mod tests {
         let record = EncodedRecord {
             key: Some(vec![0; 3]),
             value: Some(vec![0; 5]),
-            headers: vec![("ab".to_string(), Some(vec![0; 7])), ("cd".to_string(), None)],
+            headers: vec![
+                ("ab".to_string(), Some(vec![0; 7])),
+                ("cd".to_string(), None),
+            ],
         };
         assert_eq!(record.size_bytes(), 3 + 5 + 2 + 7 + 2);
     }
@@ -837,15 +848,22 @@ mod tests {
 
     #[test]
     fn each_refusal_says_what_to_do_about_it() {
-        assert!(PublishRefusal::NotConnected
-            .message("orders")
-            .contains("Connect"));
-        assert!(PublishRefusal::NotAllowed
-            .message("orders")
-            .contains("Allow publishing"));
+        assert!(
+            PublishRefusal::NotConnected
+                .message("orders")
+                .contains("Connect")
+        );
+        assert!(
+            PublishRefusal::NotAllowed
+                .message("orders")
+                .contains("Allow publishing")
+        );
         let denied = PublishRefusal::BrokerDenied("Topic authorization failed".to_string());
         let message = denied.message("orders");
-        assert!(message.contains("orders"), "the topic must be named: {message}");
+        assert!(
+            message.contains("orders"),
+            "the topic must be named: {message}"
+        );
         assert!(message.contains("reconnect"));
     }
 
@@ -958,5 +976,4 @@ mod tests {
         let json = serde_json::to_string(&PublishFailureKind::Authorization).unwrap();
         assert_eq!(json, "\"authorization\"");
     }
-
 }

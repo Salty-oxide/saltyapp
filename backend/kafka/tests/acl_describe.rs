@@ -52,11 +52,15 @@ const PREFIX: &str = "e2e-acl-prefixed-";
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn acl_bootstrap() -> Option<String> {
-    std::env::var("SALTY_E2E_ACL_BOOTSTRAP").ok().filter(|v| !v.is_empty())
+    std::env::var("SALTY_E2E_ACL_BOOTSTRAP")
+        .ok()
+        .filter(|v| !v.is_empty())
 }
 
 fn plain_bootstrap() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|v| !v.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|v| !v.is_empty())
 }
 
 macro_rules! acl_broker {
@@ -234,7 +238,10 @@ async fn resolves_a_prefixed_pattern_against_a_concrete_topic_name() {
         .iter()
         .find(|binding| binding.pattern_type == PatternType::Prefixed)
         .unwrap_or_else(|| {
-            panic!("a PREFIXED binding on {PREFIX} should govern {concrete}; got {:?}", listing.bindings)
+            panic!(
+                "a PREFIXED binding on {PREFIX} should govern {concrete}; got {:?}",
+                listing.bindings
+            )
         });
 
     assert_eq!(prefixed.resource_name, PREFIX);

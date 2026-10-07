@@ -162,7 +162,8 @@ pub fn stream_for_topic(streams: &[(String, String)], topic: &str) -> Option<Str
 mod tests {
     use super::*;
 
-    const HEADER: &str = r#"{"queryId":"q1","columnNames":["ID","AMOUNT"],"columnTypes":["STRING","BIGINT"]}"#;
+    const HEADER: &str =
+        r#"{"queryId":"q1","columnNames":["ID","AMOUNT"],"columnTypes":["STRING","BIGINT"]}"#;
 
     #[test]
     fn reads_column_names_and_types_from_the_header() {
@@ -172,8 +173,14 @@ mod tests {
         assert_eq!(
             header.columns,
             vec![
-                KsqlColumn { name: "ID".into(), kind: "STRING".into() },
-                KsqlColumn { name: "AMOUNT".into(), kind: "BIGINT".into() },
+                KsqlColumn {
+                    name: "ID".into(),
+                    kind: "STRING".into()
+                },
+                KsqlColumn {
+                    name: "AMOUNT".into(),
+                    kind: "BIGINT".into()
+                },
             ]
         );
     }

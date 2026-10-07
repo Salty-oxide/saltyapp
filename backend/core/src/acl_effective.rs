@@ -226,11 +226,7 @@ mod tests {
     use super::*;
     use crate::acl::{AclAvailability, AclBinding, PatternType, ResourceType};
 
-    fn binding(
-        principal: &str,
-        operation: AclOperation,
-        permission: AclPermission,
-    ) -> AclBinding {
+    fn binding(principal: &str, operation: AclOperation, permission: AclPermission) -> AclBinding {
         AclBinding {
             resource_type: ResourceType::Topic,
             resource_name: "orders".into(),
@@ -264,7 +260,11 @@ mod tests {
 
     #[test]
     fn ignores_bindings_belonging_to_another_principal() {
-        let bindings = [binding("User:other", AclOperation::Write, AclPermission::Allow)];
+        let bindings = [binding(
+            "User:other",
+            AclOperation::Write,
+            AclPermission::Allow,
+        )];
 
         let verdict = effective(&bindings, "User:w", AclOperation::Write);
 
@@ -274,7 +274,11 @@ mod tests {
     // `All` is a grant of everything, not an operation in its own right.
     #[test]
     fn the_all_operation_grants_every_operation() {
-        let bindings = [binding("User:admin", AclOperation::All, AclPermission::Allow)];
+        let bindings = [binding(
+            "User:admin",
+            AclOperation::All,
+            AclPermission::Allow,
+        )];
 
         for operation in AclOperation::TOPIC_COLUMNS {
             let verdict = effective(&bindings, "User:admin", operation);
@@ -340,10 +344,7 @@ mod tests {
             let verdict = effective(&bindings, "User:x", AclOperation::Describe);
 
             assert!(verdict.allowed, "expected {granted:?} to imply Describe");
-            assert_eq!(
-                verdict.reason,
-                VerdictReason::ImpliedAllow { via: granted }
-            );
+            assert_eq!(verdict.reason, VerdictReason::ImpliedAllow { via: granted });
         }
     }
 
@@ -370,7 +371,11 @@ mod tests {
     // nothing about being allowed to read it.
     #[test]
     fn describe_does_not_imply_the_operations_that_imply_it() {
-        let bindings = [binding("User:d", AclOperation::Describe, AclPermission::Allow)];
+        let bindings = [binding(
+            "User:d",
+            AclOperation::Describe,
+            AclPermission::Allow,
+        )];
 
         for operation in [
             AclOperation::Read,

@@ -14,8 +14,8 @@
 //!   cargo test -p salty-kafka --test timestamp_filter -- --nocapture
 //! ```
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use salty_core::{Connection, MessageFilter, SecurityProtocol};
@@ -25,7 +25,9 @@ use salty_kafka::{KafkaClient, RdKafkaClient};
 const DEFAULT_TOPIC: &str = "e2e-basic";
 
 fn bootstrap_servers() -> Option<String> {
-    std::env::var("SALTY_E2E_BOOTSTRAP").ok().filter(|value| !value.is_empty())
+    std::env::var("SALTY_E2E_BOOTSTRAP")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn topic() -> String {
@@ -80,7 +82,12 @@ fn filter(from_timestamp_ms: Option<i64>, to_timestamp_ms: Option<i64>) -> Messa
     }
 }
 
-async fn fetch(client: &RdKafkaClient, connection: &Connection, topic: &str, filter: &MessageFilter) -> Vec<i64> {
+async fn fetch(
+    client: &RdKafkaClient,
+    connection: &Connection,
+    topic: &str,
+    filter: &MessageFilter,
+) -> Vec<i64> {
     client
         .fetch_messages(
             connection,
@@ -110,7 +117,10 @@ struct Bounds {
 
 async fn bounds(client: &RdKafkaClient, connection: &Connection, topic: &str) -> Bounds {
     let timestamps = fetch(client, connection, topic, &filter(None, None)).await;
-    assert!(!timestamps.is_empty(), "fixture topic {topic} is empty — run scripts/e2e-fixtures.sh");
+    assert!(
+        !timestamps.is_empty(),
+        "fixture topic {topic} is empty — run scripts/e2e-fixtures.sh"
+    );
     Bounds {
         oldest: *timestamps.iter().min().expect("non-empty"),
         newest: *timestamps.iter().max().expect("non-empty"),
@@ -135,7 +145,13 @@ async fn a_from_after_every_message_matches_nothing_rather_than_everything() {
     let topic = topic();
     let bounds = bounds(&client, &connection, &topic).await;
 
-    let matched = fetch(&client, &connection, &topic, &filter(Some(bounds.newest + 1), None)).await;
+    let matched = fetch(
+        &client,
+        &connection,
+        &topic,
+        &filter(Some(bounds.newest + 1), None),
+    )
+    .await;
 
     println!(
         "topic holds {} messages spanning {}..={}; From {} matched {}",
@@ -145,7 +161,11 @@ async fn a_from_after_every_message_matches_nothing_rather_than_everything() {
         bounds.newest + 1,
         matched.len()
     );
-    assert!(matched.is_empty(), "From after the newest message returned {} message(s)", matched.len());
+    assert!(
+        matched.is_empty(),
+        "From after the newest message returned {} message(s)",
+        matched.len()
+    );
 }
 
 /// The other end of the same fallback, which was always right: a To after
@@ -161,7 +181,13 @@ async fn a_to_after_every_message_matches_the_whole_topic() {
     let topic = topic();
     let bounds = bounds(&client, &connection, &topic).await;
 
-    let matched = fetch(&client, &connection, &topic, &filter(None, Some(bounds.newest + 1))).await;
+    let matched = fetch(
+        &client,
+        &connection,
+        &topic,
+        &filter(None, Some(bounds.newest + 1)),
+    )
+    .await;
 
     assert_eq!(matched.len(), bounds.count);
 }
@@ -179,9 +205,18 @@ async fn a_to_before_every_message_matches_nothing() {
     let topic = topic();
     let bounds = bounds(&client, &connection, &topic).await;
 
-    let matched = fetch(&client, &connection, &topic, &filter(None, Some(bounds.oldest))).await;
+    let matched = fetch(
+        &client,
+        &connection,
+        &topic,
+        &filter(None, Some(bounds.oldest)),
+    )
+    .await;
 
-    assert!(matched.is_empty(), "To at the oldest timestamp is exclusive, so nothing precedes it");
+    assert!(
+        matched.is_empty(),
+        "To at the oldest timestamp is exclusive, so nothing precedes it"
+    );
 }
 
 /// A From at or before the oldest message takes the whole topic — the
@@ -197,7 +232,13 @@ async fn a_from_at_the_oldest_message_matches_the_whole_topic() {
     let topic = topic();
     let bounds = bounds(&client, &connection, &topic).await;
 
-    let matched = fetch(&client, &connection, &topic, &filter(Some(bounds.oldest), None)).await;
+    let matched = fetch(
+        &client,
+        &connection,
+        &topic,
+        &filter(Some(bounds.oldest), None),
+    )
+    .await;
 
     assert_eq!(matched.len(), bounds.count);
 }
@@ -220,7 +261,10 @@ async fn messages_returned_for_a_window_all_carry_timestamps_inside_it() {
     let to = bounds.newest + 1;
     let matched = fetch(&client, &connection, &topic, &filter(Some(from), Some(to))).await;
 
-    assert!(!matched.is_empty(), "the full span should match every message");
+    assert!(
+        !matched.is_empty(),
+        "the full span should match every message"
+    );
     for timestamp in &matched {
         assert!(
             *timestamp >= from && *timestamp < to,

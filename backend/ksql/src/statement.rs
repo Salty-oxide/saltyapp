@@ -229,7 +229,10 @@ mod tests {
 
     #[test]
     fn classifies_print() {
-        assert_eq!(classify("PRINT 'orders' FROM BEGINNING;"), StatementKind::Print);
+        assert_eq!(
+            classify("PRINT 'orders' FROM BEGINNING;"),
+            StatementKind::Print
+        );
     }
 
     #[test]
@@ -255,7 +258,10 @@ mod tests {
     #[test]
     fn classifies_drop_and_terminate() {
         assert_eq!(classify("DROP STREAM orders;"), StatementKind::Drop);
-        assert_eq!(classify("TERMINATE CTAS_ORDERS_5;"), StatementKind::Terminate);
+        assert_eq!(
+            classify("TERMINATE CTAS_ORDERS_5;"),
+            StatementKind::Terminate
+        );
     }
 
     // The distinction the whole classifier exists for. Both start with CREATE
@@ -328,7 +334,10 @@ mod tests {
 
     #[test]
     fn treats_an_unterminated_block_comment_as_unrecognised() {
-        assert_eq!(classify("/* never closed SELECT 1;"), StatementKind::Unknown);
+        assert_eq!(
+            classify("/* never closed SELECT 1;"),
+            StatementKind::Unknown
+        );
     }
 
     #[test]

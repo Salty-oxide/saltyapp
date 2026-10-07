@@ -38,7 +38,9 @@ fn report_reasons(report: &Report<AppError>) -> String {
     report
         .frames()
         .filter_map(|frame| match frame.kind() {
-            FrameKind::Attachment(AttachmentKind::Printable(printable)) => Some(printable.to_string()),
+            FrameKind::Attachment(AttachmentKind::Printable(printable)) => {
+                Some(printable.to_string())
+            }
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -46,7 +48,9 @@ fn report_reasons(report: &Report<AppError>) -> String {
 }
 
 fn failing() -> Result<(), Report<AppError>> {
-    Err(Report::new(AppError::Validation)).attach("the outer reason").attach("the inner reason")
+    Err(Report::new(AppError::Validation))
+        .attach("the outer reason")
+        .attach("the inner reason")
 }
 
 #[test]
@@ -57,7 +61,10 @@ fn renders_every_attached_reason_into_one_line() {
 
     // The context heading first, then each attachment — which is what the
     // frontend shows verbatim.
-    assert!(rendered.starts_with(&AppError::Validation.to_string()), "got {rendered}");
+    assert!(
+        rendered.starts_with(&AppError::Validation.to_string()),
+        "got {rendered}"
+    );
     assert!(rendered.contains("the outer reason"), "got {rendered}");
     assert!(rendered.contains("the inner reason"), "got {rendered}");
 }
@@ -68,7 +75,10 @@ fn renders_every_attached_reason_into_one_line() {
 fn the_frame_walk_still_finds_attachments() {
     let error = failing().unwrap_err();
 
-    assert!(!report_reasons(&error).is_empty(), "no printable attachments were found");
+    assert!(
+        !report_reasons(&error).is_empty(),
+        "no printable attachments were found"
+    );
 }
 
 #[test]
@@ -84,5 +94,10 @@ fn command_error_serialises_for_the_ipc_boundary() {
     let error: CommandError = failing().unwrap_err().into();
 
     let json = serde_json::to_value(&error).unwrap();
-    assert!(json["message"].as_str().unwrap().contains("the inner reason"));
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap()
+            .contains("the inner reason")
+    );
 }

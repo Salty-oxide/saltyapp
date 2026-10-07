@@ -1,13 +1,13 @@
+use apache_avro::Schema;
 use apache_avro::schema::{DecimalSchema, NamesRef, ResolvedSchema};
 use apache_avro::types::Value;
-use apache_avro::Schema;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{DateTime, NaiveTime, Timelike};
 use error_stack::{Report, ResultExt};
-use salty_core::Result;
-use salty_core::AppError;
 use num_bigint::BigInt;
+use salty_core::AppError;
+use salty_core::Result;
 
 /// Confluent wire-format header: a leading magic byte (0x00) followed by a
 /// 4-byte big-endian schema id. Mirrors the frontend's
@@ -520,7 +520,10 @@ mod tests {
 
     #[test]
     fn a_manual_schema_decodes_a_payload_with_no_framing_at_all() {
-        assert_eq!(decide_decode_strategy(&[1, 2, 3], true, false), Ok(AvroDecodeStrategy::ManualSchema));
+        assert_eq!(
+            decide_decode_strategy(&[1, 2, 3], true, false),
+            Ok(AvroDecodeStrategy::ManualSchema)
+        );
     }
 
     #[test]
@@ -545,8 +548,14 @@ mod tests {
 
     #[test]
     fn an_unidentifiable_payload_says_that_instead() {
-        assert_eq!(decide_decode_strategy(&[1, 2, 3], false, true), Err(AvroDecodeRefusal::NoSchemaAvailable));
-        assert_eq!(decide_decode_strategy(&[], false, true), Err(AvroDecodeRefusal::NoSchemaAvailable));
+        assert_eq!(
+            decide_decode_strategy(&[1, 2, 3], false, true),
+            Err(AvroDecodeRefusal::NoSchemaAvailable)
+        );
+        assert_eq!(
+            decide_decode_strategy(&[], false, true),
+            Err(AvroDecodeRefusal::NoSchemaAvailable)
+        );
     }
 
     #[test]
@@ -666,7 +675,10 @@ mod tests {
                 ("id".to_string(), Value::Long(1)),
                 ("name".to_string(), Value::String("Ada".into())),
                 ("active".to_string(), Value::Boolean(true)),
-                ("nickname".to_string(), Value::Union(0, Box::new(Value::Null))),
+                (
+                    "nickname".to_string(),
+                    Value::Union(0, Box::new(Value::Null)),
+                ),
             ])],
         );
         assert!(detect_container_file(&bytes));
@@ -691,7 +703,10 @@ mod tests {
                 ("id".to_string(), Value::Long(42)),
                 ("name".to_string(), Value::String("Ada".into())),
                 ("active".to_string(), Value::Boolean(true)),
-                ("nickname".to_string(), Value::Union(0, Box::new(Value::Null))),
+                (
+                    "nickname".to_string(),
+                    Value::Union(0, Box::new(Value::Null)),
+                ),
             ])],
         );
 
@@ -710,13 +725,19 @@ mod tests {
                     ("id".to_string(), Value::Long(1)),
                     ("name".to_string(), Value::String("Ada".into())),
                     ("active".to_string(), Value::Boolean(true)),
-                    ("nickname".to_string(), Value::Union(0, Box::new(Value::Null))),
+                    (
+                        "nickname".to_string(),
+                        Value::Union(0, Box::new(Value::Null)),
+                    ),
                 ]),
                 Value::Record(vec![
                     ("id".to_string(), Value::Long(2)),
                     ("name".to_string(), Value::String("Grace".into())),
                     ("active".to_string(), Value::Boolean(false)),
-                    ("nickname".to_string(), Value::Union(0, Box::new(Value::Null))),
+                    (
+                        "nickname".to_string(),
+                        Value::Union(0, Box::new(Value::Null)),
+                    ),
                 ]),
             ],
         );
@@ -755,7 +776,10 @@ mod tests {
 
     fn logical_record() -> Value {
         Value::Record(vec![
-            ("zulu".to_string(), Value::TimestampMillis(1_703_142_881_240)),
+            (
+                "zulu".to_string(),
+                Value::TimestampMillis(1_703_142_881_240),
+            ),
             ("amount".to_string(), decimal("123456")),
             ("identifier".to_string(), decimal("20231221071441240935")),
             ("day".to_string(), Value::Date(19_712)),
@@ -789,7 +813,15 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["zulu", "amount", "identifier", "day", "moment", "clock", "wall"]
+            [
+                "zulu",
+                "amount",
+                "identifier",
+                "day",
+                "moment",
+                "clock",
+                "wall"
+            ]
         );
     }
 
@@ -870,12 +902,18 @@ mod tests {
         let decoded = decode(&bytes, LOGICAL_SCHEMA).unwrap();
 
         assert_eq!(decoded["day"], serde_json::json!("2023-12-21"));
-        assert_eq!(decoded["zulu"], serde_json::json!("2023-12-21T07:14:41.240Z"));
+        assert_eq!(
+            decoded["zulu"],
+            serde_json::json!("2023-12-21T07:14:41.240Z")
+        );
         assert_eq!(
             decoded["moment"],
             serde_json::json!("2023-12-21T07:14:41.240935Z")
         );
-        assert_eq!(decoded["wall"], serde_json::json!("2023-12-21T07:14:41.240"));
+        assert_eq!(
+            decoded["wall"],
+            serde_json::json!("2023-12-21T07:14:41.240")
+        );
         assert_eq!(decoded["clock"], serde_json::json!("07:14:41.240"));
     }
 
@@ -1049,7 +1087,15 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["zulu", "amount", "identifier", "day", "moment", "clock", "wall"]
+            [
+                "zulu",
+                "amount",
+                "identifier",
+                "day",
+                "moment",
+                "clock",
+                "wall"
+            ]
         );
         assert_eq!(decoded["amount"], serde_json::json!("1234.56"));
         assert_eq!(decoded["day"], serde_json::json!("2023-12-21"));

@@ -185,7 +185,10 @@ mod tests {
             "frontend matches on `requestId`; got keys: {:?}",
             json.as_object().map(|o| o.keys().collect::<Vec<_>>())
         );
-        assert!(json.get("request_id").is_none(), "snake_case key must not be emitted");
+        assert!(
+            json.get("request_id").is_none(),
+            "snake_case key must not be emitted"
+        );
         assert_eq!(json["requestId"], "req-1");
     }
 
@@ -211,8 +214,13 @@ mod tests {
 
         let json = serde_json::to_value(&event).unwrap();
 
-        assert!(json.get("message").is_none(), "the single-message key must not be emitted");
-        let messages = json["messages"].as_array().expect("`messages` must be an array");
+        assert!(
+            json.get("message").is_none(),
+            "the single-message key must not be emitted"
+        );
+        let messages = json["messages"]
+            .as_array()
+            .expect("`messages` must be an array");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["partition"], 3);
     }
@@ -232,7 +240,10 @@ mod tests {
     /// leaves it `None` to get the real bytes.
     #[test]
     fn message_filter_carries_a_payload_preview_bound() {
-        let filter = MessageFilter { max_payload_preview_bytes: Some(4096), ..MessageFilter::default() };
+        let filter = MessageFilter {
+            max_payload_preview_bytes: Some(4096),
+            ..MessageFilter::default()
+        };
         let json = serde_json::to_value(&filter).unwrap();
         assert_eq!(json["maxPayloadPreviewBytes"], 4096);
 
@@ -299,7 +310,10 @@ mod tests {
             value_base64: Some("YXBwbGljYXRpb24vanNvbg==".into()),
         };
         let json = serde_json::to_string(&header).unwrap();
-        assert_eq!(json, r#"{"key":"content-type","valueBase64":"YXBwbGljYXRpb24vanNvbg=="}"#);
+        assert_eq!(
+            json,
+            r#"{"key":"content-type","valueBase64":"YXBwbGljYXRpb24vanNvbg=="}"#
+        );
     }
 
     #[test]
@@ -360,7 +374,10 @@ mod tests {
                     key: "trace-id".into(),
                     value_base64: Some("YWJjMTIz".into()),
                 },
-                MessageHeader { key: "empty".into(), value_base64: None },
+                MessageHeader {
+                    key: "empty".into(),
+                    value_base64: None,
+                },
             ],
             payload_size_bytes: None,
         };

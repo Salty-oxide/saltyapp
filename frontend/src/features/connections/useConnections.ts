@@ -1,8 +1,15 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ConnectionStatus, ImportSummary, NewConnection } from "../../lib/tauri";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { useMessageViewerStore } from "../workspace/useMessageViewerStore";
 import { clearConnectionState } from "./clearConnectionState";
+import {
+  hasRecentClusterSuccess,
+  isClusterDataKey,
+  REACHABILITY_POLL_MS,
+  reachabilityPollInterval,
+} from "./connectionStatusPolling";
 
 export function useConnectionsQuery() {
   return useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
@@ -58,9 +65,11 @@ export function useImportConnections() {
 }
 
 /**
- * How often a *connected* cluster's reachability dot is refreshed. This is
- * the dot doing its job — the user is working against this cluster and wants
- * to know promptly if it goes away.
+ * How often the *in-process* reads behind a connected cluster are refreshed
+ * (`connection-connected`, `connection-auth-block`). They cost an IPC call and
+ * no socket, and the auth breaker can trip at any moment, so they stay
+ * responsive. The reachability probe, which does open a socket, is slower:
+ * see `REACHABILITY_POLL_MS`.
  */
 export const CONNECTED_STATUS_POLL_MS = 10_000;
 
@@ -84,8 +93,8 @@ export const CONNECTED_STATUS_POLL_MS = 10_000;
  */
 export const IDLE_STATUS_POLL_MS = 60_000;
 
-export function statusPollInterval(isConnected: boolean): number {
-  return isConnected ? CONNECTED_STATUS_POLL_MS : IDLE_STATUS_POLL_MS;
+export function statusPollInterval(isConnected: boolean, lastStatus?: ConnectionStatus): number {
+  return isConnected ? reachabilityPollInterval(lastStatus) : IDLE_STATUS_POLL_MS;
 }
 
 /**
@@ -107,11 +116,37 @@ export function statusPollInterval(isConnected: boolean): number {
  * it: Reconnect, and the New Connection modal's Test and Ping buttons.
  */
 export function useConnectionStatus(id: string, isConnected: boolean) {
+  const queryClient = useQueryClient();
+  const queryKey = ["connection-status", id];
+
+  // The app's own failed request is the earliest evidence a cluster has gone,
+  // so it triggers a probe now rather than at the next (slow) tick. The probe
+  // still decides: an authorization refusal or a bad topic name fails a
+  // request while the cluster is perfectly reachable. `cancelRefetch: false`
+  // folds a burst of failures into the probe already in flight.
+  useEffect(() => {
+    if (!isConnected) return;
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated" || event.action.type !== "error") return;
+      if (!isClusterDataKey(event.query.queryKey, id)) return;
+      void queryClient.refetchQueries({ queryKey: ["connection-status", id] }, { cancelRefetch: false });
+    });
+  }, [queryClient, id, isConnected]);
+
   return useQuery({
-    queryKey: ["connection-status", id],
-    queryFn: () => api.checkConnectionStatus(id),
+    queryKey,
+    queryFn: async () => {
+      // A request to the cluster that just succeeded already proves it is
+      // reachable, so the TCP probe would only add a socket. Never when the
+      // last probe failed: confirming a failure has to be a real check.
+      const last = queryClient.getQueryData<ConnectionStatus>(queryKey);
+      if (last !== "UNREACHABLE" && hasRecentClusterSuccess(queryClient, id, REACHABILITY_POLL_MS)) {
+        return "REACHABLE" as ConnectionStatus;
+      }
+      return api.checkConnectionStatus(id);
+    },
     enabled: isConnected,
-    refetchInterval: statusPollInterval(isConnected),
+    refetchInterval: (query) => statusPollInterval(isConnected, query.state.data),
     initialData: "UNKNOWN" as const,
   });
 }

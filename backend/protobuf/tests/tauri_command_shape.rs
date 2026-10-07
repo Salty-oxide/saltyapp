@@ -15,16 +15,19 @@
 #![allow(clippy::needless_question_mark)]
 
 use error_stack::ResultExt;
-use salty_core::Result;
 use salty_core::AppError;
-use salty_protobuf::{decide_decode_strategy, ProtobufDecodeStrategy, ProtobufDecoded, ProtobufSchemaSource};
+use salty_core::Result;
+use salty_protobuf::{
+    ProtobufDecodeStrategy, ProtobufDecoded, ProtobufSchemaSource, decide_decode_strategy,
+};
 
 async fn decode_protobuf(
     bytes: Vec<u8>,
     manual_schema: Option<String>,
     registry_schema: Option<String>,
 ) -> Result<ProtobufDecoded, AppError> {
-    let strategy = decide_decode_strategy(&bytes, manual_schema.is_some(), registry_schema.is_some());
+    let strategy =
+        decide_decode_strategy(&bytes, manual_schema.is_some(), registry_schema.is_some());
 
     let (body_offset, message_index) = match strategy {
         ProtobufDecodeStrategy::RawFields { body_offset } => {
@@ -39,7 +42,8 @@ async fn decode_protobuf(
             body_offset,
             message_index,
         } => {
-            let schema = manual_schema.expect("the strategy is only chosen when a manual schema exists");
+            let schema =
+                manual_schema.expect("the strategy is only chosen when a manual schema exists");
             return Ok(tokio::task::spawn_blocking(move || {
                 salty_protobuf::decode(
                     &bytes[body_offset..],
@@ -59,7 +63,8 @@ async fn decode_protobuf(
         } => (body_offset, message_index),
     };
 
-    let schema_text = registry_schema.expect("the strategy is only chosen when an endpoint is configured");
+    let schema_text =
+        registry_schema.expect("the strategy is only chosen when an endpoint is configured");
     Ok(tokio::task::spawn_blocking(move || {
         salty_protobuf::decode(
             &bytes[body_offset..],
@@ -105,9 +110,13 @@ async fn decodes_with_a_manual_schema_through_the_command_shape() {
 /// `decode` itself can know about.
 #[tokio::test]
 async fn labels_a_registry_decode_as_coming_from_the_registry() {
-    let decoded = decode_protobuf(confluent_framed(&encoded_order()), None, Some(ORDER_PROTO.to_string()))
-        .await
-        .unwrap();
+    let decoded = decode_protobuf(
+        confluent_framed(&encoded_order()),
+        None,
+        Some(ORDER_PROTO.to_string()),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(decoded.value["quantity"], 7);
     assert_eq!(decoded.source, ProtobufSchemaSource::Registry);
@@ -141,7 +150,13 @@ async fn falls_back_to_field_numbers_with_no_schema_at_all() {
 /// in the camelCase shape the frontend's `ProtobufDecodeResult` expects.
 #[test]
 fn serialises_across_the_ipc_boundary_in_camel_case() {
-    let decoded = salty_protobuf::decode(&encoded_order(), ORDER_PROTO, &[0], ProtobufSchemaSource::Manual).unwrap();
+    let decoded = salty_protobuf::decode(
+        &encoded_order(),
+        ORDER_PROTO,
+        &[0],
+        ProtobufSchemaSource::Manual,
+    )
+    .unwrap();
 
     let json = serde_json::to_value(&decoded).unwrap();
     assert_eq!(json["source"], "manual");

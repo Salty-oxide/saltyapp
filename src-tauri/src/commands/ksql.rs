@@ -146,7 +146,9 @@ pub async fn ksql_query(
     sql: String,
     request_id: String,
 ) -> Result<KsqlQueryOutcome, CommandError> {
-    let cancelled = state.fetch_cancellations.begin_for_connection(&request_id, &id);
+    let cancelled = state
+        .fetch_cancellations
+        .begin_for_connection(&request_id, &id);
 
     // Everything that can refuse the query before it starts, in one place.
     // Each of these used to release the registration itself, which meant four
@@ -158,8 +160,9 @@ pub async fn ksql_query(
         let kind = permit(&sql, &connection)?;
         if !kind.is_streaming() {
             return Err(CommandError {
-                message: "This statement returns a single response — run it as a statement instead."
-                    .to_string(),
+                message:
+                    "This statement returns a single response — run it as a statement instead."
+                        .to_string(),
             });
         }
         client_for(&connection)
@@ -194,7 +197,10 @@ pub async fn ksql_query(
             move |rows| {
                 let _ = emit_app.emit(
                     "ksql-rows",
-                    KsqlRowsEvent { request_id: emit_request_id.clone(), rows },
+                    KsqlRowsEvent {
+                        request_id: emit_request_id.clone(),
+                        rows,
+                    },
                 );
             },
             move |seen| {
@@ -257,12 +263,18 @@ pub async fn ksql_query(
         }
     }
 
-    Ok(KsqlQueryOutcome { cancelled: outcome.cancelled, row_count })
+    Ok(KsqlQueryOutcome {
+        cancelled: outcome.cancelled,
+        row_count,
+    })
 }
 
 /// Stops a running query. The Stop button.
 #[tauri::command]
-pub async fn ksql_cancel(state: State<'_, AppState>, request_id: String) -> Result<(), CommandError> {
+pub async fn ksql_cancel(
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<(), CommandError> {
     state.fetch_cancellations.cancel(&request_id);
     Ok(())
 }

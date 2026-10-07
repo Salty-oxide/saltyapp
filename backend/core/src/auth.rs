@@ -30,7 +30,9 @@ const AUTH_FAILURE_REASONS: &[&str] = &[
 /// See [`AUTH_FAILURE_REASONS`] for what counts and why the list is short.
 pub fn is_auth_failure_reason(reason: &str) -> bool {
     let reason = reason.to_lowercase();
-    AUTH_FAILURE_REASONS.iter().any(|fragment| reason.contains(fragment))
+    AUTH_FAILURE_REASONS
+        .iter()
+        .any(|fragment| reason.contains(fragment))
 }
 
 #[cfg(test)]
