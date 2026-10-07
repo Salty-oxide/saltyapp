@@ -18,6 +18,8 @@ export interface DropdownProps {
   onCommit: (id: string) => void;
   /** Called with the hovered option's id, or null on mouse-leave/close — omit to disable hover preview. */
   onPreview?: (id: string | null) => void;
+  /** Keeps the label for assistive tech but doesn't show it — for dropdowns whose toggle already says what they are. */
+  hideLabel?: boolean;
 }
 
 /**
@@ -30,7 +32,7 @@ export interface DropdownProps {
  * room below — the listbox is always positioned directly under the toggle
  * button via `position: absolute; top: 100%`, so it always opens downward.
  */
-export function Dropdown({ label, ariaLabel, options, displayedId, appliedId, onCommit, onPreview }: DropdownProps) {
+export function Dropdown({ label, ariaLabel, options, displayedId, appliedId, onCommit, onPreview, hideLabel }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
@@ -111,7 +113,7 @@ export function Dropdown({ label, ariaLabel, options, displayedId, appliedId, on
 
   return (
     <div className="dropdown-field">
-      <span>{label}</span>
+      <span className={hideLabel ? "visually-hidden" : undefined}>{label}</span>
       <div className="dropdown" ref={dropdownRef}>
         <button
           type="button"
