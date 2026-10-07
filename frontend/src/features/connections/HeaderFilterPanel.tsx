@@ -109,6 +109,13 @@ export function HeaderFilterPanel({
               >
                 <Icon d="M6 6l12 12M18 6L6 18" />
               </button>
+              {/*
+                With one row there is nothing to line up with, so Clear and Add
+                sit side by side. From two rows on, every row keeps three
+                columns — Clear, Delete, Add — and the first row's Delete and
+                every non-last row's Add hold their column open as an empty
+                slot so the icons stay in line down the panel.
+              */}
               {index > 0 ? (
                 <button
                   type="button"
@@ -120,7 +127,7 @@ export function HeaderFilterPanel({
                   <Icon d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12M9 7V4h6v3" />
                 </button>
               ) : (
-                <span className="header-filter-icon-slot" />
+                rows.length > 1 && <span className="header-filter-icon-slot" />
               )}
               {index === rows.length - 1 ? (
                 <button

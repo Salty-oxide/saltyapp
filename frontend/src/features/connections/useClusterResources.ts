@@ -9,6 +9,7 @@ import {
   ProtobufDecodeResult,
   SchemaFormat,
 } from "../../lib/tauri";
+import { NonRetryableQueryError } from "../../lib/queryRetry";
 
 /**
  * How long a per-topic partition listing stays fresh.
@@ -198,34 +199,92 @@ export function useFullPayload(
 ) {
   return useQuery({
     queryKey: ["full-payload", connectionId, topic, partition, offset],
-    queryFn: () =>
-      api.fetchMessages(
-        connectionId!,
-        topic!,
-        {
-          partitions: [partition!],
-          maxMessagesPerPartition: 1,
-          maxTotalMessages: 1,
-          fromTimestampMs: null,
-          toTimestampMs: null,
-          offset: offset!,
-          includePayload: true,
-          // The whole point of this fetch — the only caller that asks for it.
-          maxPayloadPreviewBytes: null,
-        },
-        crypto.randomUUID(),
-        // Deliberately not streamed. This is the one fetch that carries whole,
-        // untruncated payloads, and its events would be emitted — megabytes at
-        // a time — only for the Data tab's listener to discard them for not
-        // matching its request id.
-        false,
-      ),
+    queryFn: () => fetchFullPayload(connectionId!, topic!, partition!, offset!),
     enabled: enabled && connectionId !== null && topic !== null && partition !== undefined && offset !== undefined,
     // Never refetched while it is on screen...
     staleTime: Infinity,
     // ...and dropped the moment it is not. See the note above.
     gcTime: 0,
   });
+}
+
+/**
+ * The longest one whole-payload fetch may take, start to finish.
+ *
+ * The backend's own limits do not add up to a deadline: its idle timer
+ * restarts on every message and its read timeout only covers the metadata
+ * calls, so a fetch that was merely slow or stuck left the viewer on its
+ * loading state with nothing to end it. This is that ending.
+ */
+export const FULL_PAYLOAD_TIMEOUT_MS = 100_000;
+
+/**
+ * The full payload is not coming: it timed out, or the fetch finished without
+ * the message. Not retried — retrying would make "100 seconds" three times
+ * that. Anything else this query throws keeps the app-wide retry policy.
+ */
+class FullPayloadUnavailableError extends NonRetryableQueryError {}
+
+async function fetchFullPayload(
+  connectionId: string,
+  topic: string,
+  partition: number,
+  offset: number,
+): Promise<MessageFetchResult> {
+  const requestId = crypto.randomUUID();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Abandoning the promise would leave the backend polling the broker for
+      // a payload nothing is waiting for any more.
+      api.cancelFetch(requestId).catch(() => {});
+      reject(
+        new FullPayloadUnavailableError(
+          `Timed out after ${FULL_PAYLOAD_TIMEOUT_MS / 1000} seconds waiting for the broker to return the message.`,
+        ),
+      );
+    }, FULL_PAYLOAD_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([
+      api.fetchMessages(
+        connectionId,
+        topic,
+        {
+          partitions: [partition],
+          maxMessagesPerPartition: 1,
+          maxTotalMessages: 1,
+          fromTimestampMs: null,
+          toTimestampMs: null,
+          offset,
+          includePayload: true,
+          // The whole point of this fetch — the only caller that asks for it.
+          maxPayloadPreviewBytes: null,
+        },
+        requestId,
+        // Deliberately not streamed. This is the one fetch that carries whole,
+        // untruncated payloads, and its events would be emitted — megabytes at
+        // a time — only for the Data tab's listener to discard them for not
+        // matching its request id.
+        false,
+      ),
+      deadline,
+    ]);
+    // A fetch that ends without the message (a record over the size limit,
+    // say, which arrives as `pollError`) is a success as far as the call is
+    // concerned. Left as one, nothing would ever fill the payload in and the
+    // viewer would report "loading" for good.
+    if (!result.messages.some((m) => m.partition === partition && m.offset === offset)) {
+      throw new FullPayloadUnavailableError(
+        result.pollError
+          ? `The full payload could not be read: ${result.pollError}`
+          : "The full payload could not be read from the broker.",
+      );
+    }
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Backs the topic detail panel's Partitions tab, and the sidebar tree's per-topic partition expand. */

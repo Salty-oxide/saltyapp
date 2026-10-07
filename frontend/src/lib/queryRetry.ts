@@ -27,12 +27,21 @@ export function isAuthError(error: unknown): boolean {
 }
 
 /**
+ * An error a query throws to say "asking again will not help": it already
+ * waited out its own deadline, or finished and found nothing. `shouldRetry`
+ * never retries one, so a 100 second deadline stays 100 seconds rather than
+ * becoming three times that.
+ */
+export class NonRetryableQueryError extends Error {}
+
+/**
  * Retry policy for every cluster query. Rejected credentials are never
  * retried — no number of attempts makes a wrong password right, and each one
- * costs the broker a handshake it has to process and log.
+ * costs the broker a handshake it has to process and log. Nor is a
+ * [`NonRetryableQueryError`].
  */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
-  return !isAuthError(error) && failureCount < MAX_QUERY_RETRIES;
+  return !isAuthError(error) && !(error instanceof NonRetryableQueryError) && failureCount < MAX_QUERY_RETRIES;
 }
 
 /**
