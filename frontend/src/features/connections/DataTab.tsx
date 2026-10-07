@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
   AllCommunityModule,
@@ -31,7 +31,9 @@ import {
   validateDateRange,
   validateMaxMessagesPerPartition,
 } from "./dataFilters";
-import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
+import { HeaderFilterPanel } from "./HeaderFilterPanel";
+import { activeHeaderCriteria, collectHeaderKeys, emptyHeaderRow, filterByHeaders } from "./headerFilters";
+import { HeaderFilterState, useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import {
   DataTabGridState,
   EMPTY_DATA_TAB_GRID_STATE,
@@ -214,6 +216,9 @@ export interface DataTabProps {
   partitionId?: number;
 }
 
+/** What a tab shows for its header filter before the user has touched it: one blank row, nothing applied. */
+const EMPTY_HEADER_FILTER: HeaderFilterState = { rows: [emptyHeaderRow()], applied: [] };
+
 /**
  * Fetch pulls a bounded snapshot of message metadata applying the filters
  * below (an all-blank filter pulls everything). Stop both discards the
@@ -237,6 +242,8 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   const defaultForm = partitionId === undefined ? emptyFilterForm() : { ...emptyFilterForm(), partitions: String(partitionId) };
   const form = useDataTabFiltersStore((s) => s.formByTab[tabKey]) ?? defaultForm;
   const setStoredForm = useDataTabFiltersStore((s) => s.setForm);
+  const headerFilter = useDataTabFiltersStore((s) => s.headerFilterByTab[tabKey]) ?? EMPTY_HEADER_FILTER;
+  const setHeaderFilter = useDataTabFiltersStore((s) => s.setHeaderFilter);
   // How the grid is arranged (sort, column filters) is kept under the same
   // key, for the same reason and one more: the middle pane is rendered
   // `key={activeTabId}` in App.tsx, so every top-level tab switch destroys
@@ -250,6 +257,11 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   const tabKeyRef = useRef(tabKey);
   tabKeyRef.current = tabKey;
   const messages = useTabDataStore((s) => s.messagesByTab[tabKey] ?? EMPTY_TAB_MESSAGES);
+  // The header filter narrows what the grid shows, not what was fetched or
+  // retained: `messages` stays whole, so clearing the filter brings every row
+  // back without another trip to the broker.
+  const visibleMessages = useMemo(() => filterByHeaders(messages, headerFilter.applied), [messages, headerFilter.applied]);
+  const headerKeys = useMemo(() => collectHeaderKeys(messages), [messages]);
   /** Set when the last Fetch stopped on the byte budget rather than on the filter — see `MessageFetchResult.stoppedAtByteBudget`. Local rather than cached per tab: it describes the fetch that just ran, and a re-fetch always re-decides it. */
   const [byteBudgetBytesRead, setByteBudgetBytesRead] = useState<number | null>(null);
   const setTabMessages = useTabDataStore((s) => s.setTabMessages);
@@ -833,6 +845,15 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
         </p>
       )}
 
+      <HeaderFilterPanel
+        rows={headerFilter.rows}
+        availableKeys={headerKeys}
+        appliedCount={headerFilter.applied.length}
+        onChange={(rows) => setHeaderFilter(tabKey, { ...headerFilter, rows })}
+        onApply={() => setHeaderFilter(tabKey, { ...headerFilter, applied: activeHeaderCriteria(headerFilter.rows) })}
+        onClear={() => setHeaderFilter(tabKey, { rows: [emptyHeaderRow()], applied: [] })}
+      />
+
       <p className="data-tab-total-count">
         {/*
           Spelled out rather than "100 / 600000 loaded", which reads as though
@@ -849,12 +870,13 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
           one finishes.
         */}
         {fetchDurationMs !== undefined && ` in ${fetchDurationMs.toLocaleString()} ms`}
+        {headerFilter.applied.length > 0 && ` · ${visibleMessages.length.toLocaleString()} shown by header filter`}
       </p>
 
       <div className="data-tab-grid" data-testid="message-grid">
         <AgGridReact<TopicMessage>
           theme={APP_GRID_THEME}
-          rowData={messages}
+          rowData={visibleMessages}
           columnDefs={COLUMN_DEFS}
           defaultColDef={DEFAULT_COL_DEF}
           context={gridContext}

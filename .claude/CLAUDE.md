@@ -1,5 +1,7 @@
 # Salty
 
+@../AGENTS.md
+
 A desktop Kafka client built with Tauri v2 (Rust backend, React/TypeScript frontend).
 
 Renamed from "Offset Explorer Oxide" in v1.0.0. The Rust crates are
