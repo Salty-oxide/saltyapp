@@ -10,7 +10,7 @@ import { useTabsStore } from "../tabs/useTabsStore";
 import { useGeneralSettingsStore } from "../settings/useGeneralSettingsStore";
 import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
-import { MAX_INLINE_PAYLOAD_BYTES, VALUE_PREVIEW_BYTES } from "./payloadDecoding";
+import { MAX_INLINE_PAYLOAD_BYTES, textToBase64, VALUE_PREVIEW_BYTES } from "./payloadDecoding";
 import { useLogsStore } from "../bottom-panel/useLogsStore";
 import { DataTab } from "./DataTab";
 
@@ -143,7 +143,7 @@ beforeEach(() => {
   useTabDataStore.setState({ messagesByTab: {}, totalMatchingByTab: {}, fetchDurationMsByTab: {}, payloadBytesByTab: {}, lastUsedByTab: {}, evictedTabs: {} });
   useLogsStore.setState({ entries: [] });
   useGeneralSettingsStore.setState({ maxTotalFetchBytes: 536_870_912 });
-  useDataTabFiltersStore.setState({ formByTab: {} });
+  useDataTabFiltersStore.setState({ formByTab: {}, headerFilterByTab: {} });
   useDataTabGridStateStore.setState({ stateByTab: {} });
 });
 
@@ -273,10 +273,10 @@ describe("DataTab", () => {
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
 
-  it("shows a 'Fetch message payload' checkbox above Fetch/Stop, unchecked by default", () => {
+  it("shows a 'Fetch message payload' checkbox above Fetch/Stop, checked by default", () => {
     const { container } = renderWithClient(<DataTab connectionId="1" topicName="orders" />);
     const checkbox = screen.getByLabelText("Fetch message payload");
-    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeChecked();
     // Above, not below: the checkbox decides what Fetch will do, so it has
     // to be readable before the button is pressed rather than after.
     const controls = container.querySelector(".data-tab-controls") as HTMLElement;
@@ -285,7 +285,7 @@ describe("DataTab", () => {
     );
   });
 
-  it("fetches messages with a default-capped, no-payload filter when Fetch is clicked with no filters touched", async () => {
+  it("fetches messages with a default-capped filter, payload included, when Fetch is clicked with no filters touched", async () => {
     const fetchMessages = vi.fn(() => ({ messages: [], totalMatching: 0 }));
     setInvokeHandlers({ connection_fetch_messages: fetchMessages });
     const user = userEvent.setup();
@@ -304,7 +304,7 @@ describe("DataTab", () => {
           fromTimestampMs: null,
           toTimestampMs: null,
           offset: null,
-          includePayload: false,
+          includePayload: true,
           maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
         },
         requestId: expect.any(String),
@@ -330,18 +330,20 @@ describe("DataTab", () => {
     expect(fetchMessages).not.toHaveBeenCalled();
   });
 
-  it("sets includePayload true when the checkbox is checked before Fetch is clicked", async () => {
+  it("has Fetch message payload checked by default, and sends includePayload false once it is unchecked", async () => {
     const fetchMessages = vi.fn(() => ({ messages: [], totalMatching: 0 }));
     setInvokeHandlers({ connection_fetch_messages: fetchMessages });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
 
-    await user.click(screen.getByLabelText("Fetch message payload"));
+    const checkbox = screen.getByLabelText("Fetch message payload");
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
     await waitFor(() =>
       expect(fetchMessages).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: expect.objectContaining({ includePayload: true }) }),
+        expect.objectContaining({ filter: expect.objectContaining({ includePayload: false }) }),
       ),
     );
   });
@@ -743,6 +745,96 @@ describe("DataTab", () => {
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch messages");
+  });
+
+  describe("header filter", () => {
+    const withHeaders = (offset: number, headers: Array<[string, string]>) => ({
+      partition: 0,
+      offset,
+      timestampMs: null,
+      keyBase64: null,
+      payloadBase64: null,
+      payloadSizeBytes: null,
+      headers: headers.map(([key, value]) => ({ key, valueBase64: textToBase64(value) })),
+    });
+    const rowOffsets = () => (lastGridProps?.rowData as Array<{ offset: number }>).map((m) => m.offset);
+
+    async function fetchHeaderMessages() {
+      const messages = [
+        withHeaders(1, [["source", "billing"], ["env", "prod"]]),
+        withHeaders(2, [["source", "billing"], ["env", "dev"]]),
+        withHeaders(3, [["source", "orders"]]),
+      ];
+      setInvokeHandlers({ connection_fetch_messages: () => ({ messages, totalMatching: 3 }) });
+      const user = userEvent.setup();
+      renderWithClient(<DataTab connectionId="1" topicName="orders" />);
+      await user.click(screen.getByRole("button", { name: "Fetch" }));
+      await waitFor(() => expect(rowOffsets()).toEqual([1, 2, 3]));
+      return user;
+    }
+
+    async function pickKey(user: ReturnType<typeof userEvent.setup>, row: number, key: string) {
+      await user.click(screen.getAllByRole("button", { name: /Select key/ })[0]);
+      await user.click(screen.getByRole("option", { name: key }));
+      expect(row).toBeGreaterThan(0);
+    }
+
+    it("starts with one blank key/value row and shows every row", async () => {
+      await fetchHeaderMessages();
+      expect(screen.getAllByLabelText(/^Header value/)).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Filter" })).toBeDisabled();
+    });
+
+    it("offers the loaded messages' header keys, and filters the grid on Filter with the value trimmed", async () => {
+      const user = await fetchHeaderMessages();
+
+      await user.click(screen.getByRole("button", { name: /Select key/ }));
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["✓ Select key", "env", "source"]);
+      await user.click(screen.getByRole("option", { name: "source" }));
+      await user.type(screen.getByLabelText("Header value 1"), "  billing  ");
+      expect(rowOffsets()).toEqual([1, 2, 3]);
+
+      await user.click(screen.getByRole("button", { name: "Filter" }));
+
+      expect(rowOffsets()).toEqual([1, 2]);
+      expect(rawCountLine()).toMatch(/^3 loaded of 3 matching in [\d,]+ ms · 2 shown by header filter$/);
+    });
+
+    it("ANDs several rows", async () => {
+      const user = await fetchHeaderMessages();
+      await pickKey(user, 1, "source");
+      await user.type(screen.getByLabelText("Header value 1"), "billing");
+      await user.click(screen.getByRole("button", { name: "Add header" }));
+      await user.click(screen.getAllByRole("button", { name: /Select key/ })[0]);
+      await user.click(screen.getByRole("option", { name: "env" }));
+      await user.type(screen.getByLabelText("Header value 2"), "prod");
+
+      await user.click(screen.getByRole("button", { name: "Filter" }));
+
+      expect(rowOffsets()).toEqual([1]);
+    });
+
+    it("Clear restores every loaded row without another fetch", async () => {
+      const user = await fetchHeaderMessages();
+      await pickKey(user, 1, "source");
+      await user.type(screen.getByLabelText("Header value 1"), "orders");
+      await user.click(screen.getByRole("button", { name: "Filter" }));
+      expect(rowOffsets()).toEqual([3]);
+
+      await user.click(screen.getByRole("button", { name: "Clear" }));
+
+      expect(rowOffsets()).toEqual([1, 2, 3]);
+      expect(screen.getByLabelText("Header value 1")).toHaveValue("");
+      expect(countLine()).toBe("3 loaded of 3 matching");
+    });
+
+    it("keeps the typed rows unapplied until Filter is pressed", async () => {
+      const user = await fetchHeaderMessages();
+      await pickKey(user, 1, "source");
+      await user.type(screen.getByLabelText("Header value 1"), "orders");
+
+      expect(rowOffsets()).toEqual([1, 2, 3]);
+    });
   });
 
   it("shows nothing loaded before any fetch has run", () => {

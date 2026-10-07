@@ -48,7 +48,7 @@ export function emptyFilterForm(): FilterFormState {
     fromDate: "",
     toDate: "",
     offset: "",
-    includePayload: false,
+    includePayload: true,
   };
 }
 

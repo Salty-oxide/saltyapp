@@ -4,7 +4,7 @@ import { MAX_INLINE_PAYLOAD_BYTES, PAYLOAD_RETENTION_BUDGET_BYTES, VALUE_PREVIEW
 import { formatLocalTimestamp } from "../../lib/time";
 
 describe("emptyFilterForm", () => {
-  it("pre-fills both count caps, and leaves every other field blank with includePayload unchecked", () => {
+  it("pre-fills both count caps, and leaves every other field blank with includePayload checked", () => {
     const form = emptyFilterForm();
     expect(form.maxMessagesPerPartition).toBe("100");
     // Prefilled rather than blank: blank means "no overall budget", which
@@ -14,7 +14,7 @@ describe("emptyFilterForm", () => {
     expect(form.fromDate).toBe("");
     expect(form.toDate).toBe("");
     expect(form.offset).toBe("");
-    expect(form.includePayload).toBe(false);
+    expect(form.includePayload).toBe(true);
   });
 });
 
@@ -27,7 +27,7 @@ describe("toMessageFilter", () => {
       fromTimestampMs: null,
       toTimestampMs: null,
       offset: null,
-      includePayload: false,
+      includePayload: true,
       maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
     });
   });

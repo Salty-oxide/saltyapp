@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { FilterFormState } from "./dataFilters";
+import { HeaderCriterion, HeaderFilterRow } from "./headerFilters";
 import { dataTabKeyBelongsTo } from "../workspace/useTabDataStore";
 
 /**
@@ -11,9 +12,18 @@ import { dataTabKeyBelongsTo } from "../workspace/useTabDataStore";
  * so returning to a topic showed its cached messages but not the filters
  * that produced them.
  */
+/** The header filter's editable rows, and the criteria last applied to the grid (they differ until the user presses Filter). */
+export interface HeaderFilterState {
+  rows: HeaderFilterRow[];
+  applied: HeaderCriterion[];
+}
+
 interface DataTabFiltersState {
   formByTab: Record<string, FilterFormState>;
   setForm: (key: string, form: FilterFormState) => void;
+  /** Kept apart from `formByTab`: these narrow the rows already loaded and are never sent to the broker. */
+  headerFilterByTab: Record<string, HeaderFilterState>;
+  setHeaderFilter: (key: string, state: HeaderFilterState) => void;
   /** Forgets every filter form belonging to one connection, in every tab — see `useTabDataStore`'s `clearForConnection`. */
   clearForConnection: (connectionId: string) => void;
 }
@@ -21,10 +31,16 @@ interface DataTabFiltersState {
 export const useDataTabFiltersStore = create<DataTabFiltersState>((set) => ({
   formByTab: {},
   setForm: (key, form) => set((state) => ({ formByTab: { ...state.formByTab, [key]: form } })),
+  headerFilterByTab: {},
+  setHeaderFilter: (key, filter) =>
+    set((state) => ({ headerFilterByTab: { ...state.headerFilterByTab, [key]: filter } })),
   clearForConnection: (connectionId) =>
     set((state) => ({
       formByTab: Object.fromEntries(
         Object.entries(state.formByTab).filter(([key]) => !dataTabKeyBelongsTo(key, connectionId)),
+      ),
+      headerFilterByTab: Object.fromEntries(
+        Object.entries(state.headerFilterByTab).filter(([key]) => !dataTabKeyBelongsTo(key, connectionId)),
       ),
     })),
 }));
