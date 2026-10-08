@@ -87,7 +87,7 @@ function parsePartitions(value: string): number[] | null {
  * for a user in IST who asked for midnight. Normalising it to local midnight
  * keeps every accepted form in one timezone.
  */
-function parseDate(value: string): number | null {
+export function parseDate(value: string): number | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00` : trimmed;
@@ -97,8 +97,13 @@ function parseDate(value: string): number | null {
 
 /** Validates the From/To date filter inputs — returns an error message if both are set and To isn't strictly after From, otherwise null. */
 export function validateDateRange(form: FilterFormState): string | null {
-  const fromMs = parseDate(form.fromDate);
-  const toMs = parseDate(form.toDate);
+  return validateDateStrings(form.fromDate, form.toDate);
+}
+
+/** `validateDateRange` for callers holding just the two inputs — the topic Metrics tab's window has no filter form. */
+export function validateDateStrings(fromDate: string, toDate: string): string | null {
+  const fromMs = parseDate(fromDate);
+  const toMs = parseDate(toDate);
   if (fromMs !== null && toMs !== null && toMs <= fromMs) {
     return "\"To\" date must be after \"From\" date";
   }

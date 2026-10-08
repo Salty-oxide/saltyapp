@@ -297,6 +297,27 @@ export function usePartitions(connectionId: string, topic: string, enabled: bool
   });
 }
 
+/**
+ * Backs the topic Metrics tab's From/To window. A window is a question about
+ * the log at a moment, not a listing, so the result is neither kept after the
+ * tab closes nor refetched on its own.
+ */
+export function usePartitionMessageCounts(
+  connectionId: string,
+  topic: string,
+  fromMs: number | null,
+  toMs: number | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["partition-message-counts", connectionId, topic, fromMs, toMs],
+    queryFn: () => api.countPartitionMessages(connectionId, topic, fromMs, toMs),
+    enabled,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+}
+
 /** Backs the topic detail panel's Config tab. */
 export function useTopicConfig(connectionId: string, topic: string) {
   return useQuery({

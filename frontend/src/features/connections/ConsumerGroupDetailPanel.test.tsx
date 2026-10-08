@@ -226,3 +226,29 @@ describe("ConsumerGroupDetailPanel", () => {
     expect(rows[3]).not.toHaveClass("lag-row--critical");
   });
 });
+
+describe("ConsumerGroupDetailPanel metrics", () => {
+  it("offers Lag, Metrics and Access tabs, and records a sample per Refresh", async () => {
+    const { useLagHistoryStore } = await import("./useLagHistoryStore");
+    useLagHistoryStore.setState({ byGroup: {} });
+    setInvokeHandlers({
+      connection_fetch_consumer_group_lag: () => ({
+        state: "Stable",
+        partitions: [
+          { topic: "orders", partition: 0, currentOffset: 1, logEndOffset: 8, lag: 7, clientId: null, clientHost: null },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderWithClient(<ConsumerGroupDetailPanel connectionId="1" groupId="g" />);
+
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Lag", "Metrics", "Access"]);
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findAllByRole("row");
+    expect(useLagHistoryStore.getState().byGroup["1::g"]).toHaveLength(1);
+
+    await user.click(screen.getByRole("tab", { name: "Metrics" }));
+    expect(await screen.findByRole("img", { name: "Lag by partition" })).toBeInTheDocument();
+  });
+});

@@ -8,13 +8,15 @@ import { TopicSchemaTab } from "./TopicSchemaTab";
 // Via `gridTabs`, never directly: that wrapper is what keeps AG Grid out of
 // the initial bundle.
 import { DataTab } from "./gridTabs";
+// Likewise Recharts, via `metricsTabs`.
+import { TopicMetricsTab } from "./metricsTabs";
 
 export interface TopicDetailPanelProps {
   connectionId: string;
   topicName: string;
 }
 
-type TopicTabId = "data" | "metadata" | "partitions" | "schema" | "config" | "access" | "query";
+type TopicTabId = "data" | "metadata" | "partitions" | "metrics" | "schema" | "config" | "access" | "query";
 
 /**
  * Data leads because it is what opening a topic is for — reading its
@@ -36,6 +38,7 @@ const TOPIC_TABS: { id: TopicTabId; label: string }[] = [
   { id: "data", label: "Data" },
   { id: "metadata", label: "Meta Data" },
   { id: "partitions", label: "Partitions" },
+  { id: "metrics", label: "Metrics" },
   { id: "schema", label: "Schema" },
   { id: "config", label: "Config" },
   { id: "access", label: "Access" },
@@ -72,6 +75,7 @@ export function TopicDetailPanel({ connectionId, topicName }: TopicDetailPanelPr
         {activeTab === "data" && <DataTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "metadata" && <TopicMetadataTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "partitions" && <PartitionsTab connectionId={connectionId} topicName={topicName} />}
+        {activeTab === "metrics" && <TopicMetricsTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "schema" && <TopicSchemaTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "config" && <ConfigTab connectionId={connectionId} topicName={topicName} />}
         {activeTab === "access" && (

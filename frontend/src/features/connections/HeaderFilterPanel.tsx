@@ -54,6 +54,10 @@ export function HeaderFilterPanel({
   // Filter can drop it (applying no criteria shows every message again).
   const canFilter = canApply || appliedCount > 0;
 
+  // Each row needs its own key (a key is offered in one row only), so more
+  // rows than distinct keys could never all be filled in.
+  const canAddRow = rows.length < availableKeys.length;
+
   function updateRow(id: string, patch: Partial<HeaderFilterRow>) {
     onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }
@@ -65,10 +69,14 @@ export function HeaderFilterPanel({
         // A key that is no longer among the loaded headers (after a re-fetch)
         // stays selectable as its own option rather than silently showing
         // "Select key" for a row that is still filtering on it.
+        const takenElsewhere = new Set(
+          rows.filter((r) => r.id !== row.id && r.key !== "").map((r) => r.key),
+        );
+        const offered = availableKeys.filter((key) => !takenElsewhere.has(key));
         const keys =
           row.key !== "" && !availableKeys.includes(row.key)
-            ? [...availableKeys, row.key]
-            : availableKeys;
+            ? [...offered, row.key]
+            : offered;
         return (
           <div className="header-filter-row" key={row.id}>
             <Dropdown
@@ -134,7 +142,12 @@ export function HeaderFilterPanel({
                   type="button"
                   className="header-filter-icon header-filter-icon--add"
                   aria-label="Add header"
-                  title="Add header"
+                  title={
+                    canAddRow
+                      ? "Add header"
+                      : "Every available header key already has a row"
+                  }
+                  disabled={!canAddRow}
                   onClick={() => onChange([...rows, emptyHeaderRow()])}
                 >
                   <Icon d="M12 5v14M5 12h14" />

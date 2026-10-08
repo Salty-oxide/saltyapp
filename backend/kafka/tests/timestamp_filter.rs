@@ -272,3 +272,52 @@ async fn messages_returned_for_a_window_all_carry_timestamps_inside_it() {
         );
     }
 }
+
+/// The topic Metrics tab's skew chart counts a From/To window by offset
+/// distance rather than by fetching, and has to agree with what the Data tab's
+/// fetch of the same window returns.
+#[tokio::test(flavor = "multi_thread")]
+async fn partition_message_counts_over_a_window_match_what_a_fetch_returns() {
+    let Some(bootstrap) = bootstrap_servers() else {
+        eprintln!("skipped: set SALTY_E2E_BOOTSTRAP to run this test");
+        return;
+    };
+    let client = RdKafkaClient::new();
+    let connection = connection(bootstrap);
+    let topic = topic();
+    let bounds = bounds(&client, &connection, &topic).await;
+    let timeout = Duration::from_secs(30);
+    let total = |counts: &[salty_core::PartitionMessageCount]| -> u64 {
+        counts.iter().map(|c| c.messages).sum()
+    };
+
+    let whole = client
+        .count_partition_messages(&connection, &topic, None, None, timeout)
+        .await
+        .expect("count failed");
+    assert_eq!(total(&whole), bounds.count as u64);
+
+    let after = client
+        .count_partition_messages(&connection, &topic, Some(bounds.newest + 1), None, timeout)
+        .await
+        .expect("count failed");
+    assert_eq!(
+        total(&after),
+        0,
+        "From after every message must match nothing"
+    );
+
+    let to_end = client
+        .count_partition_messages(&connection, &topic, None, Some(bounds.newest + 1), timeout)
+        .await
+        .expect("count failed");
+    assert_eq!(total(&to_end), bounds.count as u64);
+
+    let mid = bounds.oldest + (bounds.newest - bounds.oldest) / 2;
+    let counted = client
+        .count_partition_messages(&connection, &topic, Some(mid), None, timeout)
+        .await
+        .expect("count failed");
+    let fetched = fetch(&client, &connection, &topic, &filter(Some(mid), None)).await;
+    assert_eq!(total(&counted), fetched.len() as u64);
+}
