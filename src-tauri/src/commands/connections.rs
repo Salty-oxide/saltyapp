@@ -880,6 +880,39 @@ pub async fn connection_list_partitions(
     Ok(result?)
 }
 
+/// Backs the topic Metrics tab's partition-skew chart when a From/To window is set.
+#[tauri::command]
+pub async fn connection_count_partition_messages(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    topic: String,
+    from_timestamp_ms: Option<i64>,
+    to_timestamp_ms: Option<i64>,
+    read_timeout_ms: u64,
+) -> Result<Vec<salty_core::PartitionMessageCount>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .count_partition_messages(
+            &connection,
+            &topic,
+            from_timestamp_ms,
+            to_timestamp_ms,
+            Duration::from_millis(read_timeout_ms),
+        )
+        .await;
+    record_auth_outcome(&state, &id, &result);
+    log_broker_call(
+        &app,
+        "Counting partition messages",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
 /// Backs the topic detail panel's Config tab.
 #[tauri::command]
 pub async fn connection_describe_topic_config(

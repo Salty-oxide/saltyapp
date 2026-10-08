@@ -283,6 +283,17 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   opened every node (`useState(true)`) and is unchanged. The cost of the
   default: a flatten now walks the whole document, so collapsing one node in a
   4 MB payload rebuilds ~300k rows.
+- **Recharts is lazy like AG Grid.** The consumer group and topic Metrics tabs
+  load through `features/connections/metricsTabs.tsx`; import them from there,
+  not from their own modules. The lag-over-time series is built from samples
+  the app takes itself (`useLagHistoryStore`, one per Refresh, in memory,
+  capped at 200) because Kafka only reports the present. The per-partition bar
+  charts (`PartitionBarRows`) never shrink their bars: each has a fixed width
+  with its count printed on top, and past what fits across the panel they wrap
+  onto further rows sharing one Y scale — a 400-partition topic is a tall
+  chart to scroll, deliberately, not a thin one (a zoom brush was tried and
+  removed). Topic skew is high
+  minus low watermark per partition, so compacted topics overstate live data.
 - **`JsonTreeView` is virtualized and must stay that way.** It flattens the
   document to a list of lines (`jsonTreeLines.ts`) and renders it through
   `react-window`'s `List`, so the DOM holds a screenful of rows however much is

@@ -16,8 +16,9 @@ use salty_core::{
     ConfigEntry, Connection, ConnectionStatus, ConsumerGroupLag, ConsumerGroupSummary,
     EncodedRecord, INTER_BROKER_PROTOCOL_VERSION_CONFIG, LIVENESS_GRACE_MS, LivenessTracker,
     MessageFetchResult, MessageFilter, MessageHeader, PROCESS_ROLES_CONFIG, PartitionLag,
-    PartitionSummary, PublishOutcome, STATS_INTERVAL_MS, SaslMechanism, SecurityProtocol,
-    TopicMessage, TopicSummary, broker_state_is_up, cluster_version_report,
+    PartitionMessageCount, PartitionSummary, PublishOutcome, STATS_INTERVAL_MS, SaslMechanism,
+    SecurityProtocol, TopicMessage, TopicSummary, broker_state_is_up, cluster_version_report,
+    messages_in_range,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -292,6 +293,24 @@ pub trait KafkaClient: Send + Sync {
         topic: &str,
         read_timeout: Duration,
     ) -> Result<Vec<PartitionSummary>, AppError>;
+
+    /// Backs the topic Metrics tab's partition-skew chart when a From/To
+    /// window is set: how many messages each partition holds between the two
+    /// times. Each bound is resolved to an offset with `offsets_for_times` —
+    /// the same resolution the Data tab's From/To filters use, so the two
+    /// agree — and the count is the offset distance, never a scan of the
+    /// messages. A missing bound means the start or end of the log.
+    ///
+    /// Approximate by nature: `offsets_for_times` assumes timestamps rise with
+    /// offset, which a producer-assigned (CreateTime) timestamp need not.
+    async fn count_partition_messages(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        from_timestamp_ms: Option<i64>,
+        to_timestamp_ms: Option<i64>,
+        read_timeout: Duration,
+    ) -> Result<Vec<PartitionMessageCount>, AppError>;
 
     /// Backs the topic detail panel's Config tab, via librdkafka's
     /// DescribeConfigs admin API.
@@ -2300,6 +2319,98 @@ impl KafkaClient for RdKafkaClient {
         .attach("list_partitions task panicked")?
     }
 
+    async fn count_partition_messages(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        from_timestamp_ms: Option<i64>,
+        to_timestamp_ms: Option<i64>,
+        read_timeout: Duration,
+    ) -> Result<Vec<PartitionMessageCount>, AppError> {
+        let client = self.live_metadata_client(connection, read_timeout).await?;
+        let topic = topic.to_string();
+        tokio::task::spawn_blocking(move || {
+            let consumer = Arc::clone(&client.consumer);
+            let metadata = client.observed(
+                &format!("failed to fetch metadata for topic {topic}"),
+                |consumer| consumer.fetch_metadata(Some(&topic), read_timeout),
+            )?;
+            let topic_metadata = metadata
+                .topics()
+                .iter()
+                .find(|t| t.name() == topic)
+                .ok_or_else(|| error_stack::Report::new(AppError::NotFound))
+                .attach_with(|| format!("topic {topic} not found"))?;
+
+            // Outside the `observed` section — see `count_topic_messages`.
+            let partition_ids: Vec<i32> =
+                topic_metadata.partitions().iter().map(|p| p.id()).collect();
+            let watermarks =
+                watermarks_for_partitions(consumer.as_ref(), &topic, &partition_ids, read_timeout)?;
+            let high_of = |p: i32| {
+                watermarks.get(&p).map(|&(_, high)| high).ok_or_else(|| {
+                    error_stack::Report::new(AppError::NotFound)
+                        .attach(format!("no such partition: {topic}:{p}"))
+                })
+            };
+
+            // A From after every message resolves to nothing, so it falls back
+            // to the high watermark (an empty window), and a To after every
+            // message to the high watermark too (read to the end) — the same
+            // fallbacks as the Data tab's fetch, for the same reasons.
+            let starts = from_timestamp_ms
+                .map(|ms| {
+                    resolve_offsets_by_timestamp(
+                        &consumer,
+                        &topic,
+                        &partition_ids,
+                        ms,
+                        read_timeout,
+                        high_of,
+                    )
+                })
+                .transpose()?;
+            let ends = to_timestamp_ms
+                .map(|ms| {
+                    resolve_offsets_by_timestamp(
+                        &consumer,
+                        &topic,
+                        &partition_ids,
+                        ms,
+                        read_timeout,
+                        high_of,
+                    )
+                })
+                .transpose()?;
+
+            let mut counts: Vec<PartitionMessageCount> = partition_ids
+                .iter()
+                .map(|&partition| {
+                    let (low, high) = watermarks.get(&partition).copied().unwrap_or((0, 0));
+                    let start = starts
+                        .as_ref()
+                        .and_then(|m| m.get(&partition))
+                        .copied()
+                        .unwrap_or(low);
+                    let end = ends
+                        .as_ref()
+                        .and_then(|m| m.get(&partition))
+                        .copied()
+                        .unwrap_or(high);
+                    PartitionMessageCount {
+                        partition,
+                        messages: messages_in_range(low, high, start, end),
+                    }
+                })
+                .collect();
+            counts.sort_by_key(|c| c.partition);
+            Ok(counts)
+        })
+        .await
+        .change_context(AppError::Kafka)
+        .attach("count_partition_messages task panicked")?
+    }
+
     async fn describe_topic_config(
         &self,
         connection: &Connection,
@@ -4132,6 +4243,21 @@ mod tests {
         let client = RdKafkaClient::new();
         let result = client
             .list_partitions(&sample_connection(), "orders", TEST_READ_TIMEOUT)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn count_partition_messages_errors_for_a_closed_port() {
+        let client = RdKafkaClient::new();
+        let result = client
+            .count_partition_messages(
+                &sample_connection(),
+                "orders",
+                Some(1),
+                Some(2),
+                TEST_READ_TIMEOUT,
+            )
             .await;
         assert!(result.is_err());
     }

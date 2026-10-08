@@ -85,6 +85,96 @@ describe("HeaderFilterPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides a key already chosen in another row until that row is cleared or deleted", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        keys={["env", "source"]}
+        initial={[
+          { ...emptyHeaderRow(), key: "env", value: "" },
+          emptyHeaderRow(),
+        ]}
+      />,
+    );
+    const optionsOf = async () => {
+      const selects = screen.getAllByRole("button", { name: /Select key/ });
+      await user.click(selects[selects.length - 1]);
+      const texts = within(
+        screen.getByRole("listbox", { name: "Header key 2" }),
+      )
+        .getAllByRole("option")
+        .map((o) => o.textContent);
+      await user.keyboard("{Escape}");
+      return texts;
+    };
+
+    expect(await optionsOf()).toEqual(["✓ Select key", "source"]);
+
+    await user.click(screen.getByRole("button", { name: "Clear header 1" }));
+    expect(await optionsOf()).toEqual(["✓ Select key", "env", "source"]);
+  });
+
+  it("offers a deleted row's key again", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        keys={["env", "source"]}
+        initial={[
+          emptyHeaderRow(),
+          { ...emptyHeaderRow(), key: "env", value: "" },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete header 2" }));
+    await user.click(screen.getByRole("button", { name: /Select key/ }));
+
+    expect(
+      within(screen.getByRole("listbox", { name: "Header key 1" }))
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["✓ Select key", "env", "source"]);
+  });
+
+  describe("row cap", () => {
+    const add = () => screen.getByRole("button", { name: "Add header" });
+
+    it("disables Add once there are as many rows as distinct header keys", async () => {
+      const user = userEvent.setup();
+      render(<Harness keys={["env", "source"]} />);
+      expect(add()).toBeEnabled();
+
+      await user.click(add());
+
+      expect(screen.getAllByLabelText(/^Header value/)).toHaveLength(2);
+      expect(add()).toBeDisabled();
+      await user.click(add());
+      expect(screen.getAllByLabelText(/^Header value/)).toHaveLength(2);
+    });
+
+    it("disables Add on the only row when the loaded messages carry a single header key", () => {
+      render(<Harness keys={["env"]} />);
+
+      expect(add()).toBeDisabled();
+    });
+
+    it("disables Add when no header keys are loaded", () => {
+      render(<Harness keys={[]} />);
+
+      expect(add()).toBeDisabled();
+    });
+
+    it("enables Add again after a row is deleted", async () => {
+      const user = userEvent.setup();
+      render(<Harness keys={["env", "source"]} />);
+      await user.click(add());
+
+      await user.click(screen.getByRole("button", { name: "Delete header 2" }));
+
+      expect(add()).toBeEnabled();
+    });
+  });
+
   it("adds a row below with the + button, and removes it with its Delete button", async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -155,7 +245,7 @@ describe("HeaderFilterPanel", () => {
 
     it("gives a middle row Clear and Delete, and holds open the Add column", async () => {
       const user = userEvent.setup();
-      render(<Harness />);
+      render(<Harness keys={["env", "source", "trace"]} />);
       await user.click(screen.getByRole("button", { name: "Add header" }));
       await user.click(screen.getByRole("button", { name: "Add header" }));
 

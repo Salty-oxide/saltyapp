@@ -227,6 +227,7 @@ fn main() {
             commands::connections::connection_fetch_messages,
             commands::connections::connection_cancel_fetch,
             commands::connections::connection_list_partitions,
+            commands::connections::connection_count_partition_messages,
             commands::connections::connection_describe_topic_config,
             commands::connections::connection_fetch_consumer_group_lag,
             commands::acl::acl_list,

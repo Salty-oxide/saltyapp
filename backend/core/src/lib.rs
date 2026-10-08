@@ -28,7 +28,7 @@ pub use broker_liveness::{
 };
 pub use cluster::{
     BrokerSummary, ConfigEntry, ConsumerGroupLag, ConsumerGroupSummary, PartitionLag,
-    PartitionSummary, TopicSummary,
+    PartitionMessageCount, PartitionSummary, TopicSummary, messages_in_range,
 };
 pub use cluster_mode::{
     ClusterVersionReport, INTER_BROKER_PROTOCOL_VERSION_CONFIG, MetadataMode, PROCESS_ROLES_CONFIG,

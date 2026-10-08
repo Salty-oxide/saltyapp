@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { PartitionLag } from "../../lib/tauri";
 import { AclAccessTab } from "./AclAccessTab";
+import { LagMetricsTab } from "./metricsTabs";
 import { useFetchConsumerGroupLag } from "./useClusterResources";
+import { lagHistoryKey, useLagHistoryStore } from "./useLagHistoryStore";
 
-type GroupTabId = "lag" | "access";
+type GroupTabId = "lag" | "metrics" | "access";
 
 /**
  * Lag first and by default — it is what the panel has always shown and the
@@ -16,6 +18,7 @@ type GroupTabId = "lag" | "access";
  */
 const GROUP_TABS: { id: GroupTabId; label: string }[] = [
   { id: "lag", label: "Lag" },
+  { id: "metrics", label: "Metrics" },
   { id: "access", label: "Access" },
 ];
 
@@ -24,6 +27,7 @@ export interface ConsumerGroupDetailPanelProps {
   groupId: string;
 }
 
+const NO_SAMPLES: never[] = [];
 const WARNING_THRESHOLD = 1_000;
 const CRITICAL_THRESHOLD = 10_000;
 
@@ -46,6 +50,8 @@ export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGrou
   const [activeTab, setActiveTab] = useState<GroupTabId>("lag");
   const [searchText, setSearchText] = useState("");
   const fetchLag = useFetchConsumerGroupLag();
+  const recordLag = useLagHistoryStore((s) => s.record);
+  const samples = useLagHistoryStore((s) => s.byGroup[lagHistoryKey(connectionId, groupId)]) ?? NO_SAMPLES;
   const data = fetchLag.data;
 
   const totalLag = data?.partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0) ?? null;
@@ -81,13 +87,20 @@ export function ConsumerGroupDetailPanel({ connectionId, groupId }: ConsumerGrou
         <AclAccessTab connectionId={connectionId} resourceType="group" resourceName={groupId} />
       )}
 
+      {activeTab === "metrics" && <LagMetricsTab data={data} samples={samples} />}
+
       {activeTab === "lag" && (
         <>
       <div className="lag-panel-summary">
         <span>{totalLag !== null ? `Total lag: ${totalLag.toLocaleString()} messages` : ""}</span>
         <button
           type="button"
-          onClick={() => fetchLag.mutate({ connectionId, groupId })}
+          onClick={() =>
+            fetchLag.mutate(
+              { connectionId, groupId },
+              { onSuccess: (lag) => recordLag(connectionId, groupId, lag) },
+            )
+          }
           disabled={fetchLag.isPending}
         >
           Refresh

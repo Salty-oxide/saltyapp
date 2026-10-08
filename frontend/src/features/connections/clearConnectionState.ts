@@ -4,6 +4,7 @@ import { useTabDataStore } from "../workspace/useTabDataStore";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
+import { useLagHistoryStore } from "./useLagHistoryStore";
 import { usePublishDraftStore } from "./usePublishDraftStore";
 import { useKsqlStore } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
@@ -30,6 +31,7 @@ export const CLUSTER_DATA_QUERY_ROOTS = [
   "topics",
   "consumer-groups",
   "partitions",
+  "partition-message-counts",
   "topic-config",
   "topic-schema",
   "full-payload",
@@ -86,6 +88,9 @@ export function clearConnectionState(queryClient: QueryClient, connectionId: str
   // re-typing a message is a better outcome than finding one waiting from a
   // session they ended.
   usePublishDraftStore.getState().clearForConnection(connectionId);
+
+  // The lag-over-time samples for this cluster's consumer groups.
+  useLagHistoryStore.getState().clearForConnection(connectionId);
 
   // And every ksqlDB workspace for this cluster: the editor's text, and the
   // rows a query left behind. A running query is already stopped by the

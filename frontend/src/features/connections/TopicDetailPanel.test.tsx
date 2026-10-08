@@ -26,13 +26,14 @@ describe("TopicDetailPanel", () => {
    * first tab and the default one, Meta Data sits next to it, and the two
    * read-only tabs (Config, Access) are last.
    */
-  it("renders Data, Meta Data, Partitions, Schema, Config, Access and Query, in that order", () => {
+  it("renders Data, Meta Data, Partitions, Metrics, Schema, Config, Access and Query, in that order", () => {
     renderWithClient(<TopicDetailPanel connectionId="1" topicName="orders" />);
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Data",
       "Meta Data",
       "Partitions",
+      "Metrics",
       "Schema",
       "Config",
       // The read-only tabs sit together at the end: Config is the broker's

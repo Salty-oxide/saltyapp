@@ -188,6 +188,11 @@ export interface PartitionSummary {
   highOffset: number;
 }
 
+export interface PartitionMessageCount {
+  partition: number;
+  messages: number;
+}
+
 export interface ConfigEntry {
   name: string;
   value: string | null;
@@ -565,6 +570,15 @@ export const api = {
     invoke<PartitionSummary[]>("connection_list_partitions", {
       id,
       topic,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /** Messages per partition between two times (either may be null for "from the start" / "to the end"), counted by offset distance. */
+  countPartitionMessages: (id: string, topic: string, fromTimestampMs: number | null, toTimestampMs: number | null) =>
+    invoke<PartitionMessageCount[]>("connection_count_partition_messages", {
+      id,
+      topic,
+      fromTimestampMs,
+      toTimestampMs,
       readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
     }),
   describeTopicConfig: (id: string, topic: string) =>

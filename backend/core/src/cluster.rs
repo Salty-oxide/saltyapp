@@ -45,6 +45,24 @@ pub struct ConfigEntry {
     pub value: Option<String>,
 }
 
+/// One partition's message count over a time window, for the topic Metrics tab's skew chart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PartitionMessageCount {
+    pub partition: i32,
+    pub messages: u64,
+}
+
+/// How many messages sit in `[start, end)` of a partition whose retained log
+/// is `[low, high)`. Both bounds are clamped to the log, and an inverted or
+/// empty window is zero rather than negative — a From later than a To, or a
+/// window entirely before retention began, simply matches nothing.
+pub fn messages_in_range(low: i64, high: i64, start: i64, end: i64) -> u64 {
+    let start = start.max(low);
+    let end = end.min(high);
+    (end - start).max(0) as u64
+}
+
 /// One row in the consumer group lag panel's table.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +136,38 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":0,"leader":1,"replicas":[1,2,3],"isr":[1,2],"lowOffset":0,"highOffset":100}"#
+        );
+    }
+
+    #[test]
+    fn messages_in_range_counts_the_overlap_of_window_and_log() {
+        assert_eq!(messages_in_range(0, 100, 10, 40), 30);
+        assert_eq!(messages_in_range(0, 100, 0, 100), 100);
+    }
+
+    #[test]
+    fn messages_in_range_clamps_to_the_retained_log() {
+        assert_eq!(messages_in_range(50, 100, 0, 70), 20);
+        assert_eq!(messages_in_range(0, 100, 80, 500), 20);
+    }
+
+    #[test]
+    fn messages_in_range_is_zero_for_empty_inverted_or_disjoint_windows() {
+        assert_eq!(messages_in_range(0, 100, 40, 40), 0);
+        assert_eq!(messages_in_range(0, 100, 60, 20), 0);
+        assert_eq!(messages_in_range(50, 100, 0, 10), 0);
+        assert_eq!(messages_in_range(0, 100, 100, 200), 0);
+    }
+
+    #[test]
+    fn partition_message_count_serializes_fields_as_camel_case() {
+        let count = PartitionMessageCount {
+            partition: 2,
+            messages: 7,
+        };
+        assert_eq!(
+            serde_json::to_string(&count).unwrap(),
+            r#"{"partition":2,"messages":7}"#
         );
     }
 
