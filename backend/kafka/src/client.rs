@@ -30,6 +30,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::assignment::decode_consumer_protocol_assignment;
+use crate::client_log::{ClientEvent, ClientKind, log_client_event, log_client_event_named};
 use crate::config::{BrokerSslConfig, build_client_config, client_config, fetch_consumer_config};
 use crate::messages::{
     budgeted_payload_bytes, byte_budget_reached, clamp_offset, combined_start_offset,
@@ -852,6 +853,10 @@ fn probe_with(client: &ObservedClient, timeout: Duration) -> Result<ConnectionSt
 /// A client kept alive for reuse, with the version of the connection it was
 /// built from.
 struct PooledClient {
+    /// The connection's name and bootstrap servers, kept only so the idle
+    /// sweep can say which cluster's client it closed.
+    name: String,
+    bootstrap_servers: String,
     /// The connection's `updated_at` at the time this client was built. A
     /// client built from credentials the user has since edited must never be
     /// reused, and this is what notices — even if nothing thought to
@@ -943,10 +948,13 @@ fn replace_pooled_metadata_client(
     connection: &Connection,
 ) -> Result<ObservedClient, AppError> {
     let client = build_metadata_client(connection)?;
+    log_client_event(connection, ClientKind::Metadata, ClientEvent::Replaced);
     let replaced = pool.lock().unwrap_or_else(|err| err.into_inner()).insert(
         connection.id.clone(),
         PooledClient {
             updated_at: connection.updated_at.clone(),
+            name: connection.name.clone(),
+            bootstrap_servers: connection.bootstrap_servers.clone(),
             client: client.clone(),
             last_used_ms: now_ms(),
         },
@@ -1075,7 +1083,15 @@ fn reap_pools(
             .map(|(id, _)| id.clone())
             .collect();
         for id in stale {
-            dropped_metadata.extend(pool.remove(&id));
+            if let Some(pooled) = pool.remove(&id) {
+                log_client_event_named(
+                    &pooled.name,
+                    &pooled.bootstrap_servers,
+                    ClientKind::Metadata,
+                    ClientEvent::ClosedIdle,
+                );
+                dropped_metadata.push(pooled);
+            }
         }
     }
     let mut dropped_admin = Vec::new();
@@ -1087,7 +1103,15 @@ fn reap_pools(
             .map(|(id, _)| id.clone())
             .collect();
         for id in stale {
-            dropped_admin.extend(pool.remove(&id));
+            if let Some(pooled) = pool.remove(&id) {
+                log_client_event_named(
+                    &pooled.name,
+                    &pooled.bootstrap_servers,
+                    ClientKind::Admin,
+                    ClientEvent::ClosedIdle,
+                );
+                dropped_admin.push(pooled);
+            }
         }
     }
     dropped_metadata.len() + dropped_admin.len()
@@ -1101,6 +1125,9 @@ const AUTHORIZER_CLASS_CONFIG: &str = "authorizer.class.name";
 /// A pooled admin client, versioned by the connection it was built from —
 /// see [`PooledClient`], whose contract this mirrors exactly.
 struct PooledAdminClient {
+    /// See [`PooledClient::name`].
+    name: String,
+    bootstrap_servers: String,
     updated_at: String,
     client: Arc<AdminClient<DefaultClientContext>>,
     /// See [`PooledClient::last_used_ms`].
@@ -1272,10 +1299,13 @@ impl RdKafkaClient {
         }
 
         let client = build_metadata_client(connection)?;
+        log_client_event(connection, ClientKind::Metadata, ClientEvent::Opened);
         pool.insert(
             connection.id.clone(),
             PooledClient {
                 updated_at: connection.updated_at.clone(),
+                name: connection.name.clone(),
+                bootstrap_servers: connection.bootstrap_servers.clone(),
                 client: client.clone(),
                 last_used_ms: now_ms(),
             },
@@ -1316,9 +1346,12 @@ impl RdKafkaClient {
                     "failed to create kafka admin client",
                 )
             })?);
+        log_client_event(connection, ClientKind::Admin, ClientEvent::Opened);
         pool.insert(
             connection.id.clone(),
             PooledAdminClient {
+                name: connection.name.clone(),
+                bootstrap_servers: connection.bootstrap_servers.clone(),
                 updated_at: connection.updated_at.clone(),
                 client: Arc::clone(&client),
                 last_used_ms: now_ms(),
@@ -2025,6 +2058,14 @@ impl KafkaClient for RdKafkaClient {
                     shards.push(shard?);
                 }
             }
+            log_client_event(
+                &pooled_connection,
+                ClientKind::Fetch,
+                match 1 + shards.len() {
+                    1 => ClientEvent::Opened,
+                    many => ClientEvent::OpenedMany(many),
+                },
+            );
             let consumers: Vec<Arc<ObservedConsumer>> = std::iter::once(Arc::clone(&consumer))
                 .chain(shards.iter().map(|shard| Arc::clone(&shard.consumer)))
                 .collect();
@@ -2170,8 +2211,11 @@ impl KafkaClient for RdKafkaClient {
                             continue;
                         }
                         let payload = borrowed.payload().unwrap_or(&[]);
-                        payload_bytes_read +=
-                            budgeted_payload_bytes(payload.len(), filter.include_payload);
+                        payload_bytes_read += budgeted_payload_bytes(
+                            payload.len(),
+                            filter.include_payload,
+                            filter.max_payload_preview_bytes,
+                        );
                         let message = TopicMessage {
                             partition,
                             offset: borrowed.offset(),

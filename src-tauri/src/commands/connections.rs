@@ -802,7 +802,7 @@ pub async fn connection_fetch_messages(
                     &app,
                     "warn",
                     format!(
-                        "Fetch for topic \"{topic}\" stopped after reading {} MB — raise \
+                        "Fetch for topic \"{topic}\" stopped after loading {} MB of payloads — raise \
                          General settings > Messages > Max Total Fetch Size, or narrow the filter, \
                          to pull more.",
                         fetch_result.payload_bytes_read / (1024 * 1024)

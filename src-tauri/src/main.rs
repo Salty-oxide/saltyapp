@@ -82,6 +82,16 @@ fn main() {
             // `package_info()`) is the only true version of the app.
             salty_kafka::set_app_version(&handle.package_info().version.to_string());
 
+            // Client open / replace / idle-close events from the Kafka crate,
+            // each already prefixed with `[connection name]`, into the log
+            // panel.
+            {
+                let log_handle = handle.clone();
+                salty_kafka::set_client_log_sink(move |level, message| {
+                    logging::emit_log(&log_handle, level, message);
+                });
+            }
+
             tauri::async_runtime::block_on(async move {
                 // What "Application started" below reports: opening the
                 // database and running any outstanding migrations, which is

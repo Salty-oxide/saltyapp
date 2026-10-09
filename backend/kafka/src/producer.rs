@@ -215,6 +215,12 @@ pub async fn publish_messages(
                 .attach(format!("failed to create a producer for publishing: {err}"))
         })?;
 
+    crate::client_log::log_client_event(
+        connection,
+        crate::client_log::ClientKind::Producer,
+        crate::client_log::ClientEvent::Opened,
+    );
+
     let mut outcome = PublishOutcome::default();
 
     for (index, record) in records.iter().enumerate() {
