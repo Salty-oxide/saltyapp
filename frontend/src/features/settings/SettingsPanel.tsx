@@ -109,7 +109,8 @@ function GeneralSettingsTab() {
           />
         </label>
         <p className="settings-panel__hint">
-          How much one Fetch reads before stopping. Every other limit on the Data tab counts messages, which says
+          How much message payload one Fetch delivers to the UI before stopping — the previews shown, not the bytes read
+          from the network. Every other limit on the Data tab counts messages, which says
           nothing about size — on a topic of multi-megabyte records, "100 messages" can be several gigabytes.
         </p>
       </section>

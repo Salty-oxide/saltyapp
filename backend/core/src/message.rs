@@ -146,9 +146,10 @@ pub struct MessageFetchResult {
     /// Data tab can say the result was cut short and why, instead of silently
     /// showing fewer rows than the filter implies.
     pub stopped_at_byte_budget: bool,
-    /// Total payload bytes read from the broker during this fetch, counted
-    /// before any preview truncation — what the budget above measures, and
-    /// what the Data tab reports back to the user.
+    /// Payload bytes this fetch kept — after any preview truncation, i.e.
+    /// what was delivered to the UI rather than what crossed the network.
+    /// What the budget above measures, and what the Data tab reports back to
+    /// the user.
     pub payload_bytes_read: u64,
 }
 
