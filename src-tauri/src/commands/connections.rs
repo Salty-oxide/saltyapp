@@ -227,6 +227,7 @@ pub async fn connection_delete(
     let started = std::time::Instant::now();
     salty_db::connections::delete(&state.pool, &id).await?;
     salty_db::topic_schemas::delete_all_for_connection(&state.pool, &id).await?;
+    salty_db::organization::delete_all_for_connection(&state.pool, &id).await?;
     state.connections.mark_disconnected(&id);
     state.connections.clear_auth_failures(&id);
     state.kafka.release(&id);

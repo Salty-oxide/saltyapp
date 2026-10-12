@@ -136,3 +136,31 @@ export function SaveIcon() {
   );
 }
 
+
+/** A closed folder — a named group in the Topics / Consumers lists. */
+export function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.5 1.7h6.3a1 1 0 0 1 1 1v5.8a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** A map pin — marks a topic pinned to the top of its list. */
+export function PinIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M9.8 1.8l4.4 4.4-1.4.5-2.2 2.2.2 3-1.2 1.2-2.6-2.6-3.9 3.9-.7-.7 3.9-3.9-2.6-2.6 1.2-1.2 3-.2 2.2-2.2.5-1.4Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

@@ -360,4 +360,16 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   that order by `SecurityAuthenticationTab`, each keeping its own `disabled`
   fieldset. "Schema" was "Advanced" — every field on it is a Schema Registry
   setting.
+- **Pins and folders live in SQLite (`0008_resource_organization.sql`,
+  `salty_db::organization`), per connection, and are not exported.** Topics can
+  be pinned; topics *and* consumer groups can be filed in flat, one-level
+  folders (an item is in at most one — the primary key says so). The tables
+  declare no foreign keys because the app never enables the `foreign_keys`
+  pragma, so folder delete and `connection_delete` clean up explicitly. A pinned
+  topic shows only under Pinned and keeps its folder for when it is unpinned;
+  search looks inside closed folders and opens matching ones *without* storing
+  that (`flattenRows`). Dragging is pointer-event based, like `TabBar`, not
+  HTML5 DnD, which Tauri's default drag-drop handling breaks on Windows. The
+  arrangement is pure (`organizeResources.ts`) and shared by `TopicCategory`
+  and `ResourceCategory` through `useResourceOrganizer`.
 - Frontend feature folders pair each component/store with its test file (e.g. `useTabsStore.ts` + `useTabsStore.test.ts`) rather than a separate `__tests__` tree.
