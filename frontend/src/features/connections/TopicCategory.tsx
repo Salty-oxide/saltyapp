@@ -7,6 +7,8 @@ import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionSt
 import { usePartitions } from "./useClusterResources";
 import { usePartitionPanelTabStore } from "./usePartitionPanelTabStore";
 import { treeKey, useTreeUiStore } from "./useTreeUiStore";
+import { FolderHeaderRow, NewFolderRow, PinnedLabelRow, PinnedMark } from "./OrganizedRows";
+import { ResourceOrganizer, useResourceOrganizer } from "./useResourceOrganizer";
 
 export interface TopicCategoryProps {
   connectionId: string;
@@ -34,6 +36,8 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
   const toggleExpanded = useTreeUiStore((s) => s.toggleExpanded);
   const query = useTreeUiStore((s) => s.searchText[key] ?? "");
   const setSearchText = useTreeUiStore((s) => s.setSearchText);
+  const organizer = useResourceOrganizer({ connectionId, kind: "topic", categoryKey: key });
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
 
   function toggle() {
     // Refetches on every open, not just the first — see the matching
@@ -44,7 +48,12 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
     toggleExpanded(key);
   }
 
-  const filtered = (topics ?? []).filter((topic) => topic.name.toLowerCase().includes(query.toLowerCase()));
+  const rows = organizer.rowsFor(
+    topics ?? [],
+    (topic) => topic.name,
+    query,
+    (topic) => topic.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
 
   return (
     <li className="resource-category">
@@ -52,13 +61,23 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
         className={`resource-category-header${expanded ? " resource-category-header--expanded" : ""}`}
         data-testid="category-Topics"
         onClick={toggle}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setHeaderMenu({ x: e.clientX, y: e.clientY });
+        }}
       >
         <span className="tree-caret" aria-hidden="true" />
         Topics
         {error && <CategoryWarningMarker label="Topics" error={error} />}
       </div>
+      {headerMenu && (
+        <ContextMenu x={headerMenu.x} y={headerMenu.y} items={organizer.headerMenuItems} onClose={() => setHeaderMenu(null)} />
+      )}
       {expanded && (
-        <div className="resource-category-body">
+        <div
+          className={`resource-category-body${organizer.dragging !== null && organizer.dropTarget === "" ? " resource-category-body--drop" : ""}`}
+          data-drop-root=""
+        >
           {/* Sticky band, like the category header and cluster row above it —
               see `.resource-category-search-row`. This is the category the
               pinning matters most for: a cluster with hundreds of topics is
@@ -76,15 +95,33 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
           {error && <CategoryLoadWarning label="Topics" error={error} />}
           {isLoading && <p>Loading…</p>}
           <ul className="resource-item-list">
-            {filtered.map((topic) => (
-              <TopicRow
-                key={topic.name}
-                connectionId={connectionId}
-                topic={topic}
-                isSelected={isSelected(topic)}
-                onSelect={() => onSelect(topic)}
-              />
-            ))}
+            <NewFolderRow organizer={organizer} />
+            {rows.map((row) => {
+              if (row.type === "pinned-label") return <PinnedLabelRow key="pinned-label" />;
+              if (row.type === "folder") {
+                return (
+                  <FolderHeaderRow
+                    key={`folder-${row.folder.id}`}
+                    folder={row.folder}
+                    count={row.count}
+                    open={row.open}
+                    organizer={organizer}
+                  />
+                );
+              }
+              return (
+                <TopicRow
+                  key={`${row.section}-${row.item.name}`}
+                  connectionId={connectionId}
+                  topic={row.item}
+                  isSelected={isSelected(row.item)}
+                  onSelect={() => onSelect(row.item)}
+                  organizer={organizer}
+                  pinned={row.section === "pinned"}
+                  folderId={row.folderId}
+                />
+              );
+            })}
           </ul>
         </div>
       )}
@@ -97,9 +134,14 @@ interface TopicRowProps {
   topic: TopicSummary;
   isSelected: boolean;
   onSelect: () => void;
+  organizer: ResourceOrganizer;
+  /** Shown in the Pinned section — marks the row with a pin. */
+  pinned: boolean;
+  /** Set when the row sits inside an open folder: indents it and makes it a drop target for that folder. */
+  folderId?: string;
 }
 
-function TopicRow({ connectionId, topic, isSelected, onSelect }: TopicRowProps) {
+function TopicRow({ connectionId, topic, isSelected, onSelect, organizer, pinned, folderId }: TopicRowProps) {
   const activeTabId = useTabsStore((s) => s.activeTabId);
   const key = treeKey(activeTabId, connectionId, "topic", topic.name);
   const expanded = useTreeUiStore((s) => s.expanded[key] ?? false);
@@ -110,6 +152,8 @@ function TopicRow({ connectionId, topic, isSelected, onSelect }: TopicRowProps) 
   const setPartitionTab = usePartitionPanelTabStore((s) => s.set);
   /** Which partition's context menu is open, and where — `null` when none is. */
   const [menu, setMenu] = useState<{ partitionId: number; x: number; y: number } | null>(null);
+  /** Where the topic's own (pin / move to folder) menu is open, when it is. */
+  const [topicMenu, setTopicMenu] = useState<{ x: number; y: number } | null>(null);
 
   function toggleExpand(e: ReactMouseEvent) {
     e.stopPropagation();
@@ -126,8 +170,24 @@ function TopicRow({ connectionId, topic, isSelected, onSelect }: TopicRowProps) 
   }
 
   return (
-    <li data-testid={`resource-item-${topic.name}`}>
-      <div className={`resource-item${isSelected ? " resource-item--selected" : ""}`} onClick={onSelect}>
+    <li
+      data-testid={`resource-item-${topic.name}`}
+      className={folderId ? "resource-row--in-folder" : undefined}
+      data-drop-folder={folderId}
+    >
+      <div
+        className={`resource-item${isSelected ? " resource-item--selected" : ""}${organizer.dragging === topic.name ? " resource-item--dragging" : ""}`}
+        onClick={() => {
+          // The click that ends a drag is not a selection.
+          if (organizer.consumeDragClick()) return;
+          onSelect();
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setTopicMenu({ x: e.clientX, y: e.clientY });
+        }}
+        {...organizer.itemDragProps(topic.name)}
+      >
         <button
           type="button"
           className={`tree-caret-button${expanded ? " tree-caret-button--expanded" : ""}`}
@@ -137,7 +197,16 @@ function TopicRow({ connectionId, topic, isSelected, onSelect }: TopicRowProps) 
           <span className="tree-caret" aria-hidden="true" />
         </button>
         {topic.name}
+        {pinned && <PinnedMark />}
       </div>
+      {topicMenu && (
+        <ContextMenu
+          x={topicMenu.x}
+          y={topicMenu.y}
+          items={organizer.itemMenuItems(topic.name)}
+          onClose={() => setTopicMenu(null)}
+        />
+      )}
       {expanded && (
         <ul className="topic-partition-list" data-testid={`partitions-${topic.name}`}>
           {partitions.isLoading && <li className="topic-partition-empty">Loading partitions…</li>}

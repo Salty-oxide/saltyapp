@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod organization;
 pub mod tabs;
 pub mod topic_schemas;
 

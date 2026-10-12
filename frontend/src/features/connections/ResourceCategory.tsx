@@ -4,6 +4,9 @@ import { CategoryLoadWarning, CategoryWarningMarker } from "./CategoryLoadWarnin
 import { ContextMenu, ContextMenuItem } from "../../components/ContextMenu";
 import { ROW_HEIGHT_PX, useTreeListRows } from "./useTreeListHeight";
 import { useTreeUiStore } from "./useTreeUiStore";
+import { FolderHeaderRow, NewFolderRow, PinnedLabelRow } from "./OrganizedRows";
+import type { TreeRow } from "./organizeResources";
+import type { ResourceOrganizer } from "./useResourceOrganizer";
 
 /** Below this many (post-filter) items, the plain unvirtualized `<ul>` is cheap enough to just render outright — avoids giving small lists an arbitrary fixed-height scroll box for no benefit. */
 const VIRTUALIZE_THRESHOLD = 50;
@@ -46,6 +49,13 @@ export interface ResourceCategoryProps<T> {
    * node so this component stays ignorant of what the notice means.
    */
   notice?: React.ReactNode;
+  /**
+   * Turns on folders (and drag-to-folder) for this list. Optional so the
+   * categories that have no use for them — Brokers, Access Control — stay
+   * exactly as they were. The hook lives with the caller because it needs the
+   * connection and kind, which this generic component deliberately doesn't know.
+   */
+  organizer?: ResourceOrganizer;
 }
 
 /**
@@ -68,13 +78,16 @@ export function ResourceCategory<T>({
   contextMenuItems,
   error,
   notice,
+  organizer,
 }: ResourceCategoryProps<T>) {
   const expanded = useTreeUiStore((s) => s.expanded[key] ?? false);
   const toggleExpanded = useTreeUiStore((s) => s.toggleExpanded);
   const query = useTreeUiStore((s) => s.searchText[key] ?? "");
   const setSearchText = useTreeUiStore((s) => s.setSearchText);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [itemMenu, setItemMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const headerItems: ContextMenuItem[] = [...(contextMenuItems ?? []), ...(organizer?.headerMenuItems ?? [])];
   const visibleRows = useTreeListRows(bodyRef, expanded);
 
   function toggle() {
@@ -94,14 +107,48 @@ export function ResourceCategory<T>({
     .filter((item) => (additionalFilter ? additionalFilter(item) : true))
     .filter((item) => matchesSearch(item, query));
 
-  function renderItem(item: T, style?: CSSProperties) {
+  const rows: TreeRow<T>[] = organizer
+    ? organizer.rowsFor(filtered, getKey, query, (item) => matchesSearch(item, query))
+    : filtered.map((item) => ({ type: "item", item, section: "unfiled" }));
+
+  function renderRow(row: TreeRow<T>, style?: CSSProperties) {
+    if (row.type === "pinned-label") return <PinnedLabelRow key="pinned-label" style={style} />;
+    if (row.type === "folder" && organizer) {
+      return (
+        <FolderHeaderRow
+          key={`folder-${row.folder.id}`}
+          folder={row.folder}
+          count={row.count}
+          open={row.open}
+          organizer={organizer}
+          style={style}
+        />
+      );
+    }
+    if (row.type !== "item") return null;
+    const item = row.item;
+    const dragging = organizer?.dragging === getKey(item);
     return (
       <li
-        key={getKey(item)}
+        key={`${row.section}-${getKey(item)}`}
         style={style}
         data-testid={`resource-item-${getKey(item)}`}
-        className={`resource-item${isSelected(item) ? " resource-item--selected" : ""}`}
-        onClick={() => onSelect(item)}
+        data-drop-folder={row.folderId}
+        className={`resource-item${isSelected(item) ? " resource-item--selected" : ""}${row.folderId ? " resource-row--in-folder" : ""}${dragging ? " resource-item--dragging" : ""}`}
+        onClick={() => {
+          if (organizer?.consumeDragClick()) return;
+          onSelect(item);
+        }}
+        onContextMenu={
+          organizer
+            ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setItemMenu({ name: getKey(item), x: e.clientX, y: e.clientY });
+              }
+            : undefined
+        }
+        {...(organizer ? organizer.itemDragProps(getKey(item)) : {})}
       >
         {getLabel(item)}
       </li>
@@ -115,7 +162,7 @@ export function ResourceCategory<T>({
         data-testid={`category-${label}`}
         onClick={toggle}
         onContextMenu={
-          contextMenuItems
+          headerItems.length > 0
             ? (e) => {
                 e.preventDefault();
                 setMenuPosition({ x: e.clientX, y: e.clientY });
@@ -127,11 +174,23 @@ export function ResourceCategory<T>({
         {label}
         {error && <CategoryWarningMarker label={label} error={error} />}
       </div>
-      {menuPosition && contextMenuItems && (
-        <ContextMenu x={menuPosition.x} y={menuPosition.y} items={contextMenuItems} onClose={() => setMenuPosition(null)} />
+      {menuPosition && headerItems.length > 0 && (
+        <ContextMenu x={menuPosition.x} y={menuPosition.y} items={headerItems} onClose={() => setMenuPosition(null)} />
+      )}
+      {itemMenu && organizer && (
+        <ContextMenu
+          x={itemMenu.x}
+          y={itemMenu.y}
+          items={organizer.itemMenuItems(itemMenu.name)}
+          onClose={() => setItemMenu(null)}
+        />
       )}
       {expanded && (
-        <div className="resource-category-body" ref={bodyRef}>
+        <div
+          className={`resource-category-body${organizer?.dragging != null && organizer.dropTarget === "" ? " resource-category-body--drop" : ""}`}
+          ref={bodyRef}
+          data-drop-root={organizer ? "" : undefined}
+        >
           {/* Sticky, like the category header and cluster row above it: with
               a few hundred topics the search box is the one control the user
               needs *while* scrolling the list it filters. */}
@@ -147,7 +206,12 @@ export function ResourceCategory<T>({
           {error && <CategoryLoadWarning label={label} error={error} />}
           {notice}
           {isLoading && <p>Loading…</p>}
-          {filtered.length > VIRTUALIZE_THRESHOLD ? (
+          {organizer && (
+            <ul className="resource-item-list">
+              <NewFolderRow organizer={organizer} />
+            </ul>
+          )}
+          {rows.length > VIRTUALIZE_THRESHOLD ? (
             // react-window v2 replaced `FixedSizeList` with a single `List`:
             // rows come from a `rowComponent` rather than a child render
             // function, the height moves from a `height` prop into `style`,
@@ -157,14 +221,14 @@ export function ResourceCategory<T>({
             <List
               className="resource-item-list"
               tagName="ul"
-              style={{ height: Math.min(filtered.length, visibleRows) * ROW_HEIGHT_PX }}
-              rowCount={filtered.length}
+              style={{ height: Math.min(rows.length, visibleRows) * ROW_HEIGHT_PX }}
+              rowCount={rows.length}
               rowHeight={ROW_HEIGHT_PX}
               rowProps={{}}
-              rowComponent={({ index, style }) => renderItem(filtered[index], { ...style, marginBottom: 0 })}
+              rowComponent={({ index, style }) => renderRow(rows[index], { ...style, marginBottom: 0 })}
             />
           ) : (
-            <ul className="resource-item-list">{filtered.map((item) => renderItem(item))}</ul>
+            <ul className="resource-item-list">{rows.map((row) => renderRow(row))}</ul>
           )}
         </div>
       )}

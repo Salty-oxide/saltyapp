@@ -157,6 +157,29 @@ export interface NewConnection {
   allowPublishing: boolean;
 }
 
+/** Which tree list a folder organises. */
+export type FolderKind = "topic" | "consumer";
+
+export interface ResourceFolder {
+  id: string;
+  kind: FolderKind;
+  name: string;
+}
+
+/** One topic or consumer group filed under a folder. */
+export interface FolderAssignment {
+  kind: FolderKind;
+  resourceName: string;
+  folderId: string;
+}
+
+/** A connection's pins and folders, as stored by the backend. */
+export interface Organization {
+  folders: ResourceFolder[];
+  assignments: FolderAssignment[];
+  pinnedTopics: string[];
+}
+
 export interface Tab {
   id: string;
   name: string;
@@ -663,6 +686,16 @@ export const api = {
     invoke<unknown>("connection_decode_avro", { id: connectionId, topic, payloadBase64 }),
   decodeProtobuf: (connectionId: string, topic: string, payloadBase64: string) =>
     invoke<ProtobufDecodeResult>("connection_decode_protobuf", { id: connectionId, topic, payloadBase64 }),
+  getOrganization: (connectionId: string) => invoke<Organization>("organization_get", { connectionId }),
+  createFolder: (connectionId: string, kind: FolderKind, name: string) =>
+    invoke<ResourceFolder>("organization_folder_create", { connectionId, kind, name }),
+  renameFolder: (id: string, name: string) => invoke<void>("organization_folder_rename", { id, name }),
+  deleteFolder: (id: string) => invoke<void>("organization_folder_delete", { id }),
+  /** Files a topic or consumer group in a folder, or back at the root with `folderId: null`. */
+  moveResource: (connectionId: string, kind: FolderKind, resourceName: string, folderId: string | null) =>
+    invoke<void>("organization_move_resource", { connectionId, kind, resourceName, folderId }),
+  setTopicPinned: (connectionId: string, topicName: string, pinned: boolean) =>
+    invoke<void>("organization_set_topic_pinned", { connectionId, topicName, pinned }),
   listTabs: () => invoke<Tab[]>("tab_list"),
   createTab: (name: string) => invoke<Tab>("tab_create", { name }),
   renameTab: (id: string, name: string) => invoke<void>("tab_rename", { id, name }),

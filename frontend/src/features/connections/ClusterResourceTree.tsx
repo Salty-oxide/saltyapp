@@ -7,6 +7,7 @@ import { useTabsStore } from "../tabs/useTabsStore";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { ResourceCategory } from "./ResourceCategory";
 import { TopicCategory } from "./TopicCategory";
+import { useResourceOrganizer } from "./useResourceOrganizer";
 import { useAcls, useBrokers, useConsumerGroups, useTopics } from "./useClusterResources";
 import { treeKey, useTreeUiStore } from "./useTreeUiStore";
 
@@ -61,6 +62,12 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   };
   const hideEmptyGroups = useTreeUiStore((s) => s.hideEmptyConsumerGroups[consumersTreeKey] ?? false);
   const toggleHideEmptyConsumerGroups = useTreeUiStore((s) => s.toggleHideEmptyConsumerGroups);
+
+  const consumerOrganizer = useResourceOrganizer({
+    connectionId,
+    kind: "consumer",
+    categoryKey: consumersTreeKey,
+  });
 
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const selectBroker = useWorkspaceSelectionStore((s) => s.selectBroker);
@@ -130,6 +137,7 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
           selection.groupId === group.groupId
         }
         onSelect={(group) => selectConsumerGroup(connectionId, group.groupId)}
+        organizer={consumerOrganizer}
         additionalFilter={hideEmptyGroups ? (group) => group.state !== EMPTY_GROUP_STATE : undefined}
         contextMenuItems={[
           {
