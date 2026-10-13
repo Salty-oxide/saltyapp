@@ -149,7 +149,6 @@ async fn try_publish(
 async fn message_count(client: &RdKafkaClient, connection: &Connection, partition: i32) -> usize {
     let filter = MessageFilter {
         partitions: Some(vec![partition]),
-        include_payload: true,
         ..MessageFilter::default()
     };
     client
@@ -276,7 +275,6 @@ async fn a_principal_with_write_access_publishes_normally() {
     // And it is really there, read back as the reader principal.
     let filter = MessageFilter {
         partitions: Some(vec![2]),
-        include_payload: true,
         ..MessageFilter::default()
     };
     let messages = client

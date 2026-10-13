@@ -77,7 +77,6 @@ fn filter(from_timestamp_ms: Option<i64>, to_timestamp_ms: Option<i64>) -> Messa
         from_timestamp_ms,
         to_timestamp_ms,
         offset: None,
-        include_payload: false,
         max_payload_preview_bytes: None,
     }
 }

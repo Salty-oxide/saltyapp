@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  clampPayloadCacheBytes,
   DEFAULT_BROKER_READ_TIMEOUT_MS,
   DEFAULT_MAX_MESSAGE_SIZE_BYTES,
   DEFAULT_MAX_TOTAL_FETCH_BYTES,
+  DEFAULT_PAYLOAD_CACHE_BYTES,
   DEFAULT_ZOOKEEPER_TIMEOUT_MS,
   loadStoredGeneralSettings,
+  MAX_PAYLOAD_CACHE_BYTES,
+  MIN_PAYLOAD_CACHE_BYTES,
   useGeneralSettingsStore,
 } from "./useGeneralSettingsStore";
 
@@ -16,6 +20,52 @@ beforeEach(() => {
     zookeeperTimeoutMs: DEFAULT_ZOOKEEPER_TIMEOUT_MS,
     brokerReadTimeoutMs: DEFAULT_BROKER_READ_TIMEOUT_MS,
     maxMessageSizeBytes: DEFAULT_MAX_MESSAGE_SIZE_BYTES,
+  });
+});
+
+describe("payload cache size setting", () => {
+  const MB = 1024 * 1024;
+
+  beforeEach(() => {
+    localStorage.clear();
+    useGeneralSettingsStore.setState({ payloadCacheBytes: DEFAULT_PAYLOAD_CACHE_BYTES });
+  });
+
+  it("defaults to 1 GiB, matching the backend", () => {
+    expect(DEFAULT_PAYLOAD_CACHE_BYTES).toBe(1024 * MB);
+    expect(loadStoredGeneralSettings().payloadCacheBytes).toBe(1024 * MB);
+  });
+
+  it("commits a size and persists it", () => {
+    useGeneralSettingsStore.getState().setPayloadCacheBytes(256 * MB);
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(256 * MB);
+    expect(loadStoredGeneralSettings().payloadCacheBytes).toBe(256 * MB);
+  });
+
+  it("keeps 0 as off rather than raising it to the minimum", () => {
+    useGeneralSettingsStore.getState().setPayloadCacheBytes(0);
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(0);
+    expect(loadStoredGeneralSettings().payloadCacheBytes).toBe(0);
+  });
+
+  it("raises a small size to the minimum and holds a huge one to the maximum", () => {
+    expect(clampPayloadCacheBytes(1)).toBe(MIN_PAYLOAD_CACHE_BYTES);
+    expect(clampPayloadCacheBytes(10 * 1024 * MB)).toBe(MAX_PAYLOAD_CACHE_BYTES);
+  });
+
+  it("treats a negative or non-numeric size as off", () => {
+    expect(clampPayloadCacheBytes(-5)).toBe(0);
+    expect(clampPayloadCacheBytes(Number.NaN)).toBe(0);
+    expect(clampPayloadCacheBytes(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  it("clamps a hand-edited stored value on load, and defaults when it is absent", () => {
+    localStorage.setItem("kafkaoxide.generalSettings", JSON.stringify({ payloadCacheBytes: 5 }));
+    expect(loadStoredGeneralSettings().payloadCacheBytes).toBe(MIN_PAYLOAD_CACHE_BYTES);
+
+    localStorage.setItem("kafkaoxide.generalSettings", JSON.stringify({ zookeeperTimeoutMs: 1 }));
+    expect(loadStoredGeneralSettings().payloadCacheBytes).toBe(DEFAULT_PAYLOAD_CACHE_BYTES);
   });
 });
 
@@ -71,6 +121,7 @@ describe("useGeneralSettingsStore", () => {
       brokerReadTimeoutMs: DEFAULT_BROKER_READ_TIMEOUT_MS,
       maxMessageSizeBytes: DEFAULT_MAX_MESSAGE_SIZE_BYTES,
       maxTotalFetchBytes: DEFAULT_MAX_TOTAL_FETCH_BYTES,
+      payloadCacheBytes: DEFAULT_PAYLOAD_CACHE_BYTES,
     });
   });
 

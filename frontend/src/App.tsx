@@ -26,7 +26,9 @@ import { ResizableShell } from "./features/layout/ResizableShell";
 import { useWorkspaceSelectionStore } from "./features/workspace/useWorkspaceSelectionStore";
 import { PreferencesProvider } from "./features/settings/PreferencesProvider";
 import { IdleTimerProvider } from "./features/idle/IdleTimerProvider";
+import { CloseConfirmation } from "./features/window/CloseConfirmation";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
+import { usePayloadCacheLimitSync } from "./features/settings/usePayloadCacheLimitSync";
 import { SETTINGS_TAB_ID, useSettingsPanelStore } from "./features/settings/useSettingsPanelStore";
 import { useMessageViewerStore } from "./features/workspace/useMessageViewerStore";
 import { useMessageViewerPrefsStore } from "./features/workspace/useMessageViewerPrefsStore";
@@ -107,6 +109,10 @@ function AppShell() {
   useEffect(() => {
     loadTabs();
   }, [loadTabs]);
+
+  // The backend's payload cache starts at its own default; this states the
+  // user's setting to it, now and whenever it changes.
+  usePayloadCacheLimitSync();
 
   // React Query's queries with `refetchInterval` (the sidebar's per-
   // connection status poll, every 10s) already skip firing while
@@ -291,6 +297,7 @@ function AppShell() {
         />
       </div>
       <BottomPanel />
+      <CloseConfirmation />
     </div>
   );
 }

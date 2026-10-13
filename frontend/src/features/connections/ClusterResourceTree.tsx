@@ -73,6 +73,7 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   const selectBroker = useWorkspaceSelectionStore((s) => s.selectBroker);
   const selectTopic = useWorkspaceSelectionStore((s) => s.selectTopic);
   const selectConsumerGroup = useWorkspaceSelectionStore((s) => s.selectConsumerGroup);
+  const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
   const selectPrincipal = useWorkspaceSelectionStore((s) => s.selectPrincipal);
 
   const { data: connections } = useConnectionsQuery();
@@ -138,6 +139,7 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
         }
         onSelect={(group) => selectConsumerGroup(connectionId, group.groupId)}
         organizer={consumerOrganizer}
+        onClearSelection={clearSelection}
         additionalFilter={hideEmptyGroups ? (group) => group.state !== EMPTY_GROUP_STATE : undefined}
         contextMenuItems={[
           {

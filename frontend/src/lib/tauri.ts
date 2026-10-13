@@ -236,7 +236,7 @@ export interface ConsumerGroupLag {
   partitions: PartitionLag[];
 }
 
-/** All filter fields optional — an all-undefined filter pulls every message. `includePayload` defaults to false (metadata-only). */
+/** All filter fields optional — an all-undefined filter pulls every message. */
 export interface MessageFilter {
   partitions: number[] | null;
   maxMessagesPerPartition: number | null;
@@ -244,7 +244,6 @@ export interface MessageFilter {
   fromTimestampMs: number | null;
   toTimestampMs: number | null;
   offset: number | null;
-  includePayload: boolean;
   /**
    * How many payload bytes to carry back per message; `null` means the whole
    * payload.
@@ -271,11 +270,11 @@ export interface TopicMessage {
   timestampMs: number | null;
   /** Base64-encoded — a Kafka message key is an arbitrary byte string, not guaranteed text. Decode with `base64ToBytes`/`bytesToText` from `payloadDecoding.ts` to display. */
   keyBase64: string | null;
-  /** null unless the fetch's `includePayload` filter was set, and truncated to its `maxPayloadPreviewBytes` when that was set — use `isPayloadTruncated` before treating this as the whole message. */
+  /** Truncated to the fetch's `maxPayloadPreviewBytes` when that was set — use `isPayloadTruncated` before treating this as the whole message. */
   payloadBase64: string | null;
-  /** The payload's true size in bytes, however much of it `payloadBase64` carries. Populated whenever the message has a payload, even on a metadata-only fetch. */
+  /** The payload's true size in bytes, however much of it `payloadBase64` carries. Populated whenever the message has a payload. */
   payloadSizeBytes: number | null;
-  /** Always populated regardless of `includePayload` — headers are cheap metadata, not the payload itself. */
+  /** Always populated in full — headers are cheap metadata, not the payload itself. */
   headers: MessageHeader[];
 }
 
@@ -701,6 +700,10 @@ export const api = {
   renameTab: (id: string, name: string) => invoke<void>("tab_rename", { id, name }),
   deleteTab: (id: string) => invoke<void>("tab_delete", { id }),
   reorderTabs: (ids: string[]) => invoke<void>("tab_reorder", { ids }),
+  /** Sets the backend payload cache's byte cap (`0` turns it off) and resolves with whether that was a change — a change empties the cache. Stating the current value is a no-op. */
+  setPayloadCacheLimit: (maxBytes: number) => invoke<boolean>("set_payload_cache_limit", { maxBytes }),
+  /** Drops every payload the backend has cached, for all connections and tabs, and resolves with how many there were — the cache half of "Clear memory". */
+  clearPayloadCache: () => invoke<number>("clear_payload_cache"),
   /** Trims the OS-visible working set on Windows (a no-op elsewhere) — see `commands::system::trim_process_memory`'s doc comment for why clearing app-level data alone doesn't shrink what Task Manager reports. */
   trimProcessMemory: () => invoke<void>("trim_process_memory"),
   /**

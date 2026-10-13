@@ -36,9 +36,8 @@ export function BottomPanel() {
   // Measured by `retainedRowBytes` rather than by serializing the cache:
   // in the same units the ceiling below is enforced in, and without
   // allocating a copy of everything being measured on every render. See its
-  // doc comment — both of those were wrong specifically for a tab fetched
-  // with "Fetch message payload" on, which is the only case with payloads to
-  // get wrong.
+  // doc comment — both of those were wrong specifically for a tab holding
+  // payloads, which is the only case with payloads to get wrong.
   const messagesByTab = useTabDataStore((s) => s.messagesByTab);
   const tabPrefix = tabDataPrefix(activeTabId);
   const viewedMessage = useMessageViewerStore((s) => (activeTabId ? s.byTab[activeTabId] : undefined) ?? null);
@@ -119,7 +118,21 @@ export function BottomPanel() {
     // visible working set right now instead of waiting for it to happen
     // (if it ever does). No-op on macOS/Linux — see trimProcessMemory's doc
     // comment. Fire-and-forget: nothing in the UI depends on its result.
-    void api.trimProcessMemory();
+    void releaseBackendMemory();
+  }
+
+  /**
+   * The backend's half of Clear memory: empty its payload cache, *then* trim —
+   * the trim can only return pages that have already been freed. A cache that
+   * cannot be cleared must not stop the trim, so a failure there is swallowed.
+   */
+  async function releaseBackendMemory() {
+    try {
+      await api.clearPayloadCache();
+    } catch {
+      // Nothing to tell the user: the rows they asked to clear are cleared.
+    }
+    await api.trimProcessMemory();
   }
 
   return (

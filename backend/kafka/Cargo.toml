@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 salty-core = { workspace = true }
+salty-cache = { workspace = true }
 error-stack = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

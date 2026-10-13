@@ -44,7 +44,7 @@ w.__fetchLog = [];
     payloadBytes: d.payloadBytesByTab,
     totalMatching: d.totalMatchingByTab,
     gridState: useDataTabGridStateStore.getState().stateByTab,
-    forms: Object.fromEntries(Object.entries(useDataTabFiltersStore.getState().formByTab).map(([k, v]) => [k, v.includePayload])),
+    forms: useDataTabFiltersStore.getState().formByTab,
     viewer: { active: useMessageViewerStore.getState().activeTabId, byTab: Object.fromEntries(Object.entries(useMessageViewerStore.getState().byTab).map(([k, v]) => [k, v ? v.partitionId + "|" + v.topic + "|" + v.message.partition + ":" + v.message.offset : null])) },
     fetchLog: (window as never as { __fetchLog: unknown[] }).__fetchLog,
   };
@@ -178,10 +178,9 @@ Object.assign(w.__handlers, {
     };
   },
   connection_fetch_messages: async (a: Record<string, unknown>) => {
-    const filter = a.filter as { includePayload: boolean };
     const requestId = a.requestId as string;
     const streamUpdates = a.streamUpdates as boolean;
-    w.__fetchLog.push({ topic: a.topic, includePayload: filter.includePayload, requestId, streamUpdates });
+    w.__fetchLog.push({ topic: a.topic, requestId, streamUpdates });
     const messages = [];
     for (let i = 0; i < 200; i++) {
       messages.push({
@@ -189,7 +188,7 @@ Object.assign(w.__handlers, {
         offset: 1000 + i,
         timestampMs: 1700000000000 + i * 1000,
         keyBase64: btoa("key-" + i),
-        payloadBase64: filter.includePayload ? PAYLOAD_B64 : null,
+        payloadBase64: PAYLOAD_B64,
         payloadSizeBytes: 30000,
         headers: [],
       });
@@ -209,7 +208,7 @@ Object.assign(w.__handlers, {
     return {
       messages: messages.slice(streamed),
       totalMatching: 200,
-      payloadBytesRead: filter.includePayload ? 200 * 3000 : 0,
+      payloadBytesRead: 200 * 3000,
     };
   },
 });

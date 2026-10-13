@@ -84,6 +84,13 @@ pub fn set_client_log_sink(sink: impl Fn(&str, String) + Send + Sync + 'static) 
     let _ = SINK.set(Box::new(sink));
 }
 
+/// One line from the payload cache, at `info`.
+pub(crate) fn log_cache_line(message: String) {
+    if let Some(sink) = SINK.get() {
+        sink("info", message);
+    }
+}
+
 pub(crate) fn log_client_event(
     connection: &salty_core::Connection,
     kind: ClientKind,

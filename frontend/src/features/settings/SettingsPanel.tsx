@@ -1,9 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ThemePicker } from "../theme/ThemePicker";
 import { FONT_FAMILIES, FONT_SIZE_OPTIONS_PX } from "./fonts";
 import { Dropdown } from "../../components/Dropdown";
 import { activeFontFamilyId, usePreferencesStore } from "./usePreferencesStore";
-import { useGeneralSettingsStore } from "./useGeneralSettingsStore";
+import {
+  MAX_PAYLOAD_CACHE_BYTES,
+  MIN_PAYLOAD_CACHE_BYTES,
+  useGeneralSettingsStore,
+} from "./useGeneralSettingsStore";
+
+const MIB = 1024 * 1024;
 
 const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ id: f.id, label: f.label }));
 const FONT_SIZE_OPTIONS = FONT_SIZE_OPTIONS_PX.map((px) => ({ id: String(px), label: `${px}px` }));
@@ -39,6 +45,61 @@ export function SettingsPanel() {
 
       {activeTab === "general" ? <GeneralSettingsTab /> : <AppearanceSettingsTab />}
     </div>
+  );
+}
+
+/**
+ * The payload cache's size, in MB. Edited as text and applied on blur or
+ * Enter rather than on every keystroke: applying a size empties the cache, and
+ * the minimum would otherwise rewrite "512" to "64" the moment "5" was typed.
+ */
+function PayloadCacheSizeField() {
+  const payloadCacheBytes = useGeneralSettingsStore((s) => s.payloadCacheBytes);
+  const setPayloadCacheBytes = useGeneralSettingsStore((s) => s.setPayloadCacheBytes);
+  const stored = String(Math.round(payloadCacheBytes / MIB));
+  const [draft, setDraft] = useState(stored);
+
+  // Follows the setting when it changes from outside this field — including
+  // the clamp this field's own commit just applied.
+  useEffect(() => setDraft(stored), [stored]);
+
+  function commit() {
+    const megabytes = Number(draft);
+    if (draft.trim() === "" || !Number.isFinite(megabytes)) {
+      setDraft(stored);
+      return;
+    }
+    setPayloadCacheBytes(megabytes * MIB);
+    // Show what was actually applied (the clamped value), even when that is
+    // the value already stored and so would not change `stored` on its own.
+    setDraft(String(Math.round(useGeneralSettingsStore.getState().payloadCacheBytes / MIB)));
+  }
+
+  return (
+    <>
+      <label className="dropdown-field">
+        <span>Payload Cache Size (MB)</span>
+        <input
+          type="number"
+          min={0}
+          step={64}
+          aria-label="Payload cache size (MB)"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+        />
+      </label>
+      <p className="settings-panel__hint">
+        Memory the app may use to keep message payloads larger than 4 KB, compressed, so opening a message is instant
+        instead of a trip to the broker. {payloadCacheBytes === 0 ? "The cache is off. " : ""}
+        0 turns it off; otherwise {MIN_PAYLOAD_CACHE_BYTES / MIB}–{MAX_PAYLOAD_CACHE_BYTES / MIB} MB. This is separate
+        from — and in addition to — the memory the tabs hold. Changing it empties the cache. Entries not opened for 15
+        minutes are dropped regardless.
+      </p>
+    </>
   );
 }
 
@@ -113,6 +174,7 @@ function GeneralSettingsTab() {
           from the network. Every other limit on the Data tab counts messages, which says
           nothing about size — on a topic of multi-megabyte records, "100 messages" can be several gigabytes.
         </p>
+        <PayloadCacheSizeField />
       </section>
     </div>
   );

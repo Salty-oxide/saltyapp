@@ -4,7 +4,7 @@ import { KsqlTab } from "./KsqlTab";
 import { SchemaTab } from "./SchemaTab";
 import { SecurityAuthenticationTab } from "./SecurityAuthenticationTab";
 
-export type ConnectionTabId = "properties" | "security" | "schema" | "ksqldb" | "query";
+export type ConnectionTabId = "properties" | "security" | "schema" | "ksqldb" | "metrics" | "query";
 
 export interface ConnectionTab {
   id: ConnectionTabId;

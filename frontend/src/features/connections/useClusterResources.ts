@@ -257,7 +257,6 @@ async function fetchFullPayload(
           fromTimestampMs: null,
           toTimestampMs: null,
           offset,
-          includePayload: true,
           // The whole point of this fetch — the only caller that asks for it.
           maxPayloadPreviewBytes: null,
         },

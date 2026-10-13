@@ -18,8 +18,6 @@ export interface FilterFormState {
    * partition's watermarks rather than rejected.
    */
   offset: string;
-  /** The "Fetch message payload" checkbox above Fetch. */
-  includePayload: boolean;
 }
 
 /** Matches the backend's own fallback (`DEFAULT_MESSAGE_CAP` in `messages.rs`) — shown as the field's actual starting value rather than left blank, so the cap that's about to be applied is visible up front instead of only discoverable after a fetch returns fewer rows than expected. */
@@ -48,7 +46,6 @@ export function emptyFilterForm(): FilterFormState {
     fromDate: "",
     toDate: "",
     offset: "",
-    includePayload: true,
   };
 }
 
@@ -127,7 +124,6 @@ export function toMessageFilter(form: FilterFormState): MessageFilter {
     fromTimestampMs: parseDate(form.fromDate),
     toTimestampMs: parseDate(form.toDate),
     offset: parsePositiveInt(form.offset),
-    includePayload: form.includePayload,
     // Never the whole payload — that is what killed the webview — but enough
     // of one that opening a message doesn't have to go back to the broker
     // for it. Priced out of a fixed retention budget, so a bigger fetch

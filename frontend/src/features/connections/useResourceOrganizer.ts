@@ -11,7 +11,7 @@ const DRAG_THRESHOLD_PX = 5;
 
 /** What the inline name box (the one input shared by create and rename) is doing. */
 export type FolderEdit =
-  | { mode: "create"; moveName?: string }
+  | { mode: "create"; moveNames?: string[] }
   | { mode: "rename"; folder: ResourceFolder };
 
 export interface UseResourceOrganizerOptions {
@@ -67,13 +67,18 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     return flattenRows(organized, openFolderIds);
   }
 
+  /** Moves each name in turn (one write at a time, so a failure stops where it happened). `null` is the root. */
+  async function moveAll(names: string[], folderId: string | null) {
+    for (const name of names) await actions.moveResource(kind, name, folderId);
+  }
+
   // ---- inline name box --------------------------------------------------
   const [edit, setEdit] = useState<FolderEdit | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
-  function startCreate(moveName?: string) {
+  function startCreate(moveNames?: string[]) {
     setEditError(null);
-    setEdit({ mode: "create", moveName });
+    setEdit({ mode: "create", moveNames });
   }
   function startRename(folder: ResourceFolder) {
     setEditError(null);
@@ -93,7 +98,7 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     try {
       if (edit.mode === "create") {
         const folder = await actions.createFolder(kind, name);
-        if (edit.moveName !== undefined) await actions.moveResource(kind, edit.moveName, folder.id);
+        if (edit.moveNames !== undefined) await moveAll(edit.moveNames, folder.id);
         if (!expanded[folderKey(folder.id)]) toggleExpanded(folderKey(folder.id));
       } else if (name.trim() !== edit.folder.name) {
         await actions.renameFolder(edit.folder.id, name);
@@ -105,26 +110,39 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
   }
 
   // ---- menus --------------------------------------------------------------
-  function itemMenuItems(name: string): ContextMenuItem[] {
-    const filedIn = organization.assignments.find((a) => a.kind === kind && a.resourceName === name)?.folderId;
+  /**
+   * The right-click menu for one item, or for a whole selection when given
+   * several names — every entry then applies to all of them.
+   */
+  function itemMenuItems(target: string | string[]): ContextMenuItem[] {
+    const names = Array.isArray(target) ? target : [target];
+    const folderOf = (name: string) =>
+      organization.assignments.find((a) => a.kind === kind && a.resourceName === name)?.folderId;
+    const existing = (id: string | undefined) => (id !== undefined && folders.some((f) => f.id === id) ? id : undefined);
     const items: ContextMenuItem[] = [];
     if (kind === "topic") {
-      const isPinned = pinned.has(name);
+      const allPinned = names.every((name) => pinned.has(name));
       items.push({
-        label: isPinned ? "Unpin from top" : "Pin to top",
-        onSelect: () => void actions.setPinned(name, !isPinned),
+        label: allPinned ? "Unpin from top" : "Pin to top",
+        onSelect: () =>
+          void (async () => {
+            for (const name of names) {
+              if (pinned.has(name) === allPinned) await actions.setPinned(name, !allPinned);
+            }
+          })(),
       });
     }
     for (const folder of folders) {
-      if (folder.id === filedIn) continue;
+      // Nothing to offer for a folder every one of them is already in.
+      if (names.every((name) => folderOf(name) === folder.id)) continue;
       items.push({
         label: `Move to folder: ${folder.name}`,
-        onSelect: () => void actions.moveResource(kind, name, folder.id),
+        onSelect: () => void moveAll(names, folder.id),
       });
     }
-    items.push({ label: "Move to new folder…", onSelect: () => startCreate(name) });
-    if (filedIn !== undefined && folders.some((f) => f.id === filedIn)) {
-      items.push({ label: "Remove from folder", onSelect: () => void actions.moveResource(kind, name, null) });
+    items.push({ label: "Move to new folder…", onSelect: () => startCreate(names) });
+    if (names.some((name) => existing(folderOf(name)) !== undefined)) {
+      items.push({ label: "Remove from folder", onSelect: () => void moveAll(names, null) });
     }
     return items;
   }
@@ -140,9 +158,11 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
 
   // ---- drag to folder -----------------------------------------------------
   const [dragging, setDragging] = useState<string | null>(null);
+  /** Every name the current drag carries: the pressed row, or its whole selection. */
+  const [draggingNames, setDraggingNames] = useState<string[]>([]);
   /** The folder id under the pointer (`""` for the list's background), or `null` when over nothing droppable. */
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const pressRef = useRef<{ name: string; x: number; y: number } | null>(null);
+  const pressRef = useRef<{ name: string; names: string[]; x: number; y: number } | null>(null);
   const didDragRef = useRef(false);
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
@@ -162,6 +182,7 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
         if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD_PX) return;
         didDragRef.current = true;
         setDragging(press.name);
+        setDraggingNames(press.names);
       }
       setDropTarget(dropTargetOf(e.target));
     }
@@ -170,11 +191,15 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
       pressRef.current = null;
       if (!press) return;
       setDragging(null);
+      setDraggingNames([]);
       setDropTarget(null);
       if (!didDragRef.current) return;
       const target = dropTargetOf(e.target);
       if (target === null) return;
-      void actionsRef.current.moveResource(kind, press.name, target === "" ? null : target);
+      const folderId = target === "" ? null : target;
+      void (async () => {
+        for (const name of press.names) await actionsRef.current.moveResource(kind, name, folderId);
+      })();
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -184,13 +209,17 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     };
   }, [dragging, kind]);
 
-  /** Spread on an item row. Only the primary button starts a press. */
-  function itemDragProps(name: string) {
+  /**
+   * Spread on an item row. Only the primary button starts a press. `group` is
+   * the row's whole selection when it is part of one — dragging that row then
+   * carries all of them.
+   */
+  function itemDragProps(name: string, group?: string[]) {
     return {
       onPointerDown: (e: ReactPointerEvent) => {
         if (e.button !== 0) return;
         didDragRef.current = false;
-        pressRef.current = { name, x: e.clientX, y: e.clientY };
+        pressRef.current = { name, names: group && group.includes(name) ? group : [name], x: e.clientX, y: e.clientY };
       },
     };
   }
@@ -217,6 +246,7 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     headerMenuItems,
     folderMenuItems,
     dragging,
+    draggingNames,
     dropTarget,
     itemDragProps,
     consumeDragClick,

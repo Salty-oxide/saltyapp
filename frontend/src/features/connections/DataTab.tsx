@@ -51,7 +51,6 @@ import { formatLocalTimestamp, localTimeZoneLabel } from "../../lib/time";
 import { useFetchMessages } from "./useClusterResources";
 import { useGeneralSettingsStore } from "../settings/useGeneralSettingsStore";
 import { useLogsStore } from "../bottom-panel/useLogsStore";
-import { ValueCell, ValueCellContext } from "./ValueCell";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -89,8 +88,7 @@ const valuePreviewCache = new WeakMap<TopicMessage, string>();
 
 /**
  * The Value column's text: a bounded preview of the payload (see
- * `decodeValuePreview`), blank until "Fetch message payload" is checked and a
- * fetch has run. The full payload is decoded only when a row is opened in
+ * `decodeValuePreview`), blank until a fetch has run. The full payload is decoded only when a row is opened in
  * `MessagePayloadViewer`.
  *
  * Bounded rather than whole-payload: decoding every loaded message in full
@@ -145,7 +143,7 @@ const COLUMN_DEFS: ColDef<TopicMessage>[] = [
     width: 200,
   },
   { headerName: "Key", valueGetter: formatKey, width: 150 },
-  { headerName: "Value", valueGetter: formatValue, cellRenderer: ValueCell, flex: 1 },
+  { headerName: "Value", valueGetter: formatValue, flex: 1 },
 ];
 
 const DEFAULT_COL_DEF: ColDef<TopicMessage> = {
@@ -162,10 +160,8 @@ const DEFAULT_COL_DEF: ColDef<TopicMessage> = {
  * business of deciding what's selected: the selection is driven from
  * `useMessageViewerStore` instead (see `syncGridSelection`), which is the
  * only way the highlight can't drift from what the right pane is actually
- * showing. A click AG Grid would have selected on — the Value column's
- * "Fetch payload" button — is one `onRowClicked` refuses to open, and a
- * selection the store makes on its own — restoring the viewed message after
- * a tab switch — is one no click produced.
+ * showing. A selection the store makes on its own — restoring the viewed
+ * message after a tab switch — is one no click produced.
  */
 const ROW_SELECTION: RowSelectionOptions<TopicMessage> = {
   mode: "singleRow",
@@ -174,8 +170,7 @@ const ROW_SELECTION: RowSelectionOptions<TopicMessage> = {
 };
 
 /**
- * A row's identity, stable across the re-renders that a streaming fetch and
- * a single-row payload patch both cause. (partition, offset) is unique
+ * A row's identity, stable across the re-renders that a streaming fetch causes. (partition, offset) is unique
  * within a topic by definition.
  *
  * Giving AG Grid `getRowId` is what lets a selected row survive `rowData`
@@ -269,7 +264,7 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
   const addTabPayloadBytes = useTabDataStore((s) => s.addTabPayloadBytes);
   /** Set when this view alone holds the whole Max Total Fetch Size, so eviction has nothing left it is allowed to drop — see `enforceRetentionLimit`. */
   const [payloadBudgetSpent, setPayloadBudgetSpent] = useState(false);
-  /** Payload bytes this view is currently holding, across its last Fetch and every per-row "Fetch payload" click since. */
+  /** Payload bytes this view is currently holding, from its last Fetch. */
   const payloadBytesHeld = useTabDataStore((s) => s.payloadBytesByTab[tabKey] ?? 0);
   /** True when this view's rows were dropped to keep the app inside the ceiling while the user was working elsewhere. */
   const wasEvicted = useTabDataStore((s) => s.evictedTabs[tabKey] ?? false);
@@ -662,75 +657,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
     stopActiveFetch();
   }
 
-  /**
-   * Fetches just one row's payload (by its exact partition/offset) and
-   * patches it into the cached rows — reads the store directly so it always
-   * applies on top of the latest cached rows regardless of how long the
-   * fetch took.
-   *
-   * Charged against the same app-wide Max Total Fetch Size a full Fetch is.
-   * These bytes land in exactly the same cached rows and cost the webview
-   * exactly the same memory; the only difference is that they arrive one
-   * click at a time, and each click is its own backend fetch.
-   *
-   * The click is always allowed — it is one message, and refusing it while
-   * the app holds megabytes of colder rows elsewhere would be protecting the
-   * wrong thing. The ceiling is restored afterwards by evicting those colder
-   * views instead (`enforceRetentionLimit`).
-   */
-  async function fetchPayloadForRow(row: TopicMessage) {
-    const result = await fetchMessages.mutateAsync({
-      connectionId,
-      topic: topicName,
-      filter: {
-        partitions: [row.partition],
-        maxMessagesPerPartition: 1,
-        maxTotalMessages: 1,
-        fromTimestampMs: null,
-        toTimestampMs: null,
-        offset: row.offset,
-        includePayload: true,
-        // Bounded, but at the whole-row bound rather than the grid cell's:
-        // this is one message, so the retention budget the grid fetch
-        // divides between hundreds of rows is spent on it alone — and a row
-        // filled in here should open in the viewer without needing a second
-        // trip to the broker, exactly like a row the grid fetch brought back.
-        maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
-      },
-      // Own, unmatched request id — this single-row fetch shouldn't be
-      // appended to the grid via the "messages-batch" listener above (which
-      // only reacts to the main Fetch's activeRequestIdRef); its result is
-      // patched into the cached rows directly below instead.
-      requestId: crypto.randomUUID(),
-      // ...and for the same reason it is not streamed at all: the event would
-      // be emitted only to be discarded by that listener.
-      streamUpdates: false,
-    });
-    const updated = result.messages.find((m) => m.partition === row.partition && m.offset === row.offset);
-    if (!updated) return;
-    const current = useTabDataStore.getState().messagesByTab[tabKey] ?? EMPTY_TAB_MESSAGES;
-    // The bytes actually kept for this row — the payload is truncated to
-    // `MAX_INLINE_PAYLOAD_BYTES` on the way back, so the message's full size
-    // is not what lands in memory. Charged as the *change*, because the
-    // update below replaces the row: whatever it was holding is released in
-    // the same breath, and charging for the new payload on top of the old one
-    // would have the tab counting bytes nothing holds. Zero on the ordinary
-    // path (the button only offers itself on a row with no payload at all),
-    // and the difference on a row fetched with a preview already in it.
-    const replaced = current.find((m) => m.partition === row.partition && m.offset === row.offset);
-    addTabPayloadBytes(
-      tabKey,
-      base64DecodedLength(updated.payloadBase64 ?? "") - base64DecodedLength(replaced?.payloadBase64 ?? ""),
-    );
-    setTabMessages(
-      tabKey,
-      current.map((m) => (m.partition === row.partition && m.offset === row.offset ? updated : m)),
-    );
-    enforceRetentionLimit();
-  }
-
-  const gridContext: ValueCellContext = { fetchPayload: fetchPayloadForRow };
-
   return (
     <div className="data-tab">
       <div className="data-tab-filters">
@@ -791,15 +717,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
         </label>
       </div>
 
-      <label className="connection-modal-checkbox-label data-tab-include-payload">
-        <input
-          type="checkbox"
-          checked={form.includePayload}
-          onChange={(e) => updateForm({ includePayload: e.target.checked })}
-          disabled={isPlaying}
-        />
-        Fetch message payload
-      </label>
       <div className="data-tab-controls">
         <button type="button" aria-label="Fetch" onClick={handlePlay} disabled={isPlaying}>
           ▶ Fetch
@@ -878,7 +795,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
           rowData={visibleMessages}
           columnDefs={COLUMN_DEFS}
           defaultColDef={DEFAULT_COL_DEF}
-          context={gridContext}
           getRowId={getRowId}
           rowSelection={ROW_SELECTION}
           onGridReady={handleGridReady}
@@ -900,13 +816,6 @@ export function DataTab({ connectionId, topicName, partitionId }: DataTabProps) 
           loading={isPlaying && messages.length === 0}
           overlayNoRowsTemplate="<span class='data-tab-no-rows'>No messages</span>"
           onRowClicked={(event) => {
-            // AG Grid's row-click detection runs regardless of stopPropagation
-            // on the Value column's "Fetch payload" button, so guard here
-            // instead — otherwise clicking it also opens the viewer with
-            // whatever (possibly payload-less) row data existed at click
-            // time, racing the in-flight per-row fetch.
-            const target = event.event?.target;
-            if (target instanceof HTMLElement && target.closest("button")) return;
             if (event.data) viewMessage(event.data, connectionId, topicName, partitionId);
           }}
         />

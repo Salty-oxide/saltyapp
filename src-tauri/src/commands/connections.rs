@@ -610,7 +610,8 @@ const STREAM_BATCH_SIZE: usize = 100;
 /// user could perceive that was not there already.
 const STREAM_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Backs the topic Data tab's Fetch button, and its per-row "Fetch payload".
+/// Backs the topic Data tab's Fetch button, and the payload viewer's fetch of one
+/// message in full.
 ///
 /// `stream_updates` picks between the two, and decides how the messages come
 /// back:
@@ -622,7 +623,7 @@ const STREAM_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 ///   streamed and once again in the result, so a fetch moved twice the base64
 ///   it needed to and the webview briefly held both copies. The frontend
 ///   keeps what it streamed instead.
-/// * **`false`** (the per-row payload fetch): nothing is streamed — that
+/// * **`false`** (the viewer's single-message fetch): nothing is streamed — that
 ///   caller wants one specific message back, and its events were emitted only
 ///   to be discarded by a listener that filters on a request id it
 ///   deliberately does not match — and the result carries the message.
@@ -639,11 +640,9 @@ const STREAM_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 /// keeps a large fetch from moving gigabytes of base64 into the webview and
 /// killing it.
 ///
-/// It charges only for payloads the fetch keeps, so a metadata-only browse
-/// (`include_payload` off) is never stopped by it. The Data tab spends the
-/// same budget across its own per-row "Fetch payload" clicks, which retain
-/// bytes into the same cached rows this call's result does — see
-/// `payloadBytesByTab` in `useTabDataStore`.
+/// It charges for the payload slices the fetch carries back — see
+/// `payloadBytesByTab` in `useTabDataStore` for how the frontend spends the
+/// same budget across what it retains.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn connection_fetch_messages(

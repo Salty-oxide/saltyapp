@@ -129,7 +129,7 @@ for codec in gzip snappy lz4 zstd; do
   fi
 done
 
-# --- payload_budget.rs / fetch_budget.rs -----------------------------------
+# --- fetch_budget.rs -----------------------------------------------
 # One 512 KB record per line: the console producer splits on newlines, so a
 # file of concatenated records with no separator is sent as one oversized
 # message and rejected wholesale.

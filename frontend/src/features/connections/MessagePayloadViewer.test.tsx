@@ -520,17 +520,17 @@ describe("MessagePayloadViewer", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/no schema registry configured/i);
   });
 
-  it("shows a hint to enable 'Fetch message payload' when payloadBase64 is null", () => {
+  it("shows a placeholder, and no format picker, when payloadBase64 is null", () => {
     useMessageViewerStore.setState({
       message: { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: null, headers: [] },
     });
     renderWithClient(<MessagePayloadViewer />);
 
-    expect(screen.getByText(/fetch message payload/i)).toBeInTheDocument();
+    expect(screen.getByText("No payload.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Value format:/ })).not.toBeInTheDocument();
   });
 
-  it("shows the message's partition and offset even when the payload wasn't loaded", () => {
+  it("shows the message's partition and offset even when it has no payload", () => {
     useMessageViewerStore.setState({
       message: { partition: 3, offset: 17, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: null, headers: [] },
     });
@@ -594,6 +594,47 @@ describe("MessagePayloadViewer", () => {
     expect(screen.getByText("content-type")).toBeInTheDocument();
     expect(screen.getByText("application/json")).toBeInTheDocument();
     expect(screen.getByText("empty-header")).toBeInTheDocument();
+  });
+
+  describe("copying a header value", () => {
+    function viewHeaders() {
+      useMessageViewerStore.setState({
+        message: {
+          partition: 0,
+          offset: 1,
+          timestampMs: null,
+          keyBase64: null,
+          payloadBase64: null,
+          payloadSizeBytes: null,
+          headers: [
+            { key: "content-type", valueBase64: btoa("application/json") },
+            { key: "empty-header", valueBase64: null },
+          ],
+        },
+      });
+    }
+
+    it("offers a copy button on each header value that copies it to the clipboard", async () => {
+      const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      viewHeaders();
+      const user = userEvent.setup();
+      renderWithClient(<MessagePayloadViewer />);
+      await user.click(screen.getByRole("tab", { name: "Headers" }));
+
+      await user.click(screen.getByRole("button", { name: "Copy value of content-type" }));
+
+      expect(writeText).toHaveBeenCalledWith("application/json");
+      expect(await screen.findByRole("button", { name: "Copied value of content-type" })).toBeInTheDocument();
+    });
+
+    it("has no copy button for a header with no value", async () => {
+      viewHeaders();
+      const user = userEvent.setup();
+      renderWithClient(<MessagePayloadViewer />);
+      await user.click(screen.getByRole("tab", { name: "Headers" }));
+
+      expect(screen.queryByRole("button", { name: "Copy value of empty-header" })).not.toBeInTheDocument();
+    });
   });
 
   it("shows a placeholder on the Headers tab when the message has no headers", async () => {

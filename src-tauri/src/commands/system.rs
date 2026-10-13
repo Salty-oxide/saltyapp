@@ -1,8 +1,10 @@
 use crate::commands::connections::CommandError;
+use crate::state::AppState;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use error_stack::ResultExt;
 use salty_core::AppError;
+use tauri::State;
 
 /// Asks the OS to trim this process's working set — the number Windows'
 /// Task Manager shows as "Memory". Clearing the frontend's cached rows/
@@ -31,6 +33,31 @@ pub fn trim_process_memory() {
             let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
         }
     }
+}
+
+/// Backs the bottom panel's "Clear memory": drops every payload the backend
+/// has cached (`salty_cache`), for every connection and tab, and returns how
+/// many there were.
+///
+/// The cache is app-wide, so this is not scoped to the tab whose button was
+/// pressed — what another tab loses is only speed: its next row open goes to
+/// the broker, as it did before the cache existed. Called before
+/// `trim_process_memory`, so there are freed pages to hand back.
+#[tauri::command]
+pub fn clear_payload_cache(state: State<'_, AppState>) -> u64 {
+    state.kafka.clear_payload_cache()
+}
+
+/// Backs the Settings panel's "Payload cache size": sets the backend cache's
+/// byte cap, `0` turning it off, and returns whether that was a change.
+///
+/// The frontend states its setting at every start, so an unchanged value must
+/// do nothing — a change builds a new, empty cache (moka cannot resize in
+/// place), which is why this is a separate call from `clear_payload_cache`
+/// rather than a side effect of every fetch.
+#[tauri::command]
+pub fn set_payload_cache_limit(state: State<'_, AppState>, max_bytes: u64) -> bool {
+    state.kafka.set_payload_cache_limit(max_bytes)
 }
 
 /// Backs the payload viewer's Save button. `path` is resolved by the

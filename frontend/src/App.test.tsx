@@ -20,6 +20,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 let capturedFocusHandler: ((focused: boolean) => void) | null = null;
 vi.mock("./lib/appWindow", () => ({
+  closeAppWindow: vi.fn(),
+  onCloseRequested: vi.fn(() => Promise.resolve(() => {})),
   onWindowFocusChanged: vi.fn((handler: (focused: boolean) => void) => {
     capturedFocusHandler = handler;
     return Promise.resolve(() => {});

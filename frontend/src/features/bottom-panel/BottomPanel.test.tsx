@@ -205,9 +205,9 @@ describe("BottomPanel tab memory", () => {
     expect(useTabDataStore.getState().messagesByTab[otherTabKey]).toBeDefined();
   });
 
-  // Both figures only ever disagreed with reality on a tab fetched with
-  // "Fetch message payload" on: with no payloads there was nothing for the
-  // double count below to double, and nothing for the units to differ over.
+  // Both figures only ever disagreed with reality on a tab holding payloads:
+  // with none there was nothing for the double count below to double, and
+  // nothing for the units to differ over.
   describe("with payloads fetched", () => {
     const withPayload = (offset: number, bytes: number): TopicMessage => ({
       partition: 0,
@@ -305,6 +305,37 @@ describe("BottomPanel tab memory", () => {
     await user.click(screen.getByLabelText("Clear tab memory"));
 
     expect(invoke).toHaveBeenCalledWith("trim_process_memory", undefined);
+  });
+
+  // The backend keeps up to 1 GiB of compressed payloads that no tab's
+  // "memory" figure shows; Clear memory is the user's way to release it.
+  it("empties the backend's payload cache, and only then trims, when Clear memory is clicked", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockClear();
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByLabelText("Clear tab memory"));
+
+    const calls = vi.mocked(invoke).mock.calls.map(([command]) => command);
+    expect(calls).toContain("clear_payload_cache");
+    expect(calls.indexOf("clear_payload_cache")).toBeLessThan(calls.indexOf("trim_process_memory"));
+  });
+
+  it("still trims the working set when the cache could not be cleared", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "clear_payload_cache") throw new Error("backend unavailable");
+      return undefined;
+    });
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByLabelText("Clear tab memory"));
+
+    expect(invoke).toHaveBeenCalledWith("trim_process_memory", undefined);
+    vi.mocked(invoke).mockReset();
   });
   // The counter's job is to be the number the ceiling is enforced against, so
   // the one payload carried whole rather than truncated must not be missing

@@ -9,6 +9,7 @@ import { usePartitionPanelTabStore } from "./usePartitionPanelTabStore";
 import { treeKey, useTreeUiStore } from "./useTreeUiStore";
 import { FolderHeaderRow, NewFolderRow, PinnedLabelRow, PinnedMark } from "./OrganizedRows";
 import { ResourceOrganizer, useResourceOrganizer } from "./useResourceOrganizer";
+import { useMultiSelect } from "./useMultiSelect";
 
 export interface TopicCategoryProps {
   connectionId: string;
@@ -38,6 +39,15 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
   const setSearchText = useTreeUiStore((s) => s.setSearchText);
   const organizer = useResourceOrganizer({ connectionId, kind: "topic", categoryKey: key });
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
+  const multi = useMultiSelect<TopicSummary>({
+    storeKey: key,
+    items: topics,
+    getName: (topic) => topic.name,
+    isOpen: isSelected,
+    onOpen: onSelect,
+    onClearSelection: clearSelection,
+  });
 
   function toggle() {
     // Refetches on every open, not just the first — see the matching
@@ -54,6 +64,8 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
     query,
     (topic) => topic.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
+
+  const itemOrder = rows.flatMap((row) => (row.type === "item" ? [row.item.name] : []));
 
   return (
     <li className="resource-category">
@@ -114,8 +126,9 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
                   key={`${row.section}-${row.item.name}`}
                   connectionId={connectionId}
                   topic={row.item}
-                  isSelected={isSelected(row.item)}
-                  onSelect={() => onSelect(row.item)}
+                  isSelected={isSelected(row.item) || multi.isMultiSelected(row.item.name)}
+                  onClick={(e) => multi.handleClick(row.item, e, itemOrder)}
+                  selectionGroup={multi.group}
                   organizer={organizer}
                   pinned={row.section === "pinned"}
                   folderId={row.folderId}
@@ -133,7 +146,9 @@ interface TopicRowProps {
   connectionId: string;
   topic: TopicSummary;
   isSelected: boolean;
-  onSelect: () => void;
+  onClick: (e: ReactMouseEvent) => void;
+  /** The whole multi-selection this row belongs to, when there is one: a drag or menu then acts on all of it. */
+  selectionGroup?: string[];
   organizer: ResourceOrganizer;
   /** Shown in the Pinned section — marks the row with a pin. */
   pinned: boolean;
@@ -141,7 +156,7 @@ interface TopicRowProps {
   folderId?: string;
 }
 
-function TopicRow({ connectionId, topic, isSelected, onSelect, organizer, pinned, folderId }: TopicRowProps) {
+function TopicRow({ connectionId, topic, isSelected, onClick, selectionGroup, organizer, pinned, folderId }: TopicRowProps) {
   const activeTabId = useTabsStore((s) => s.activeTabId);
   const key = treeKey(activeTabId, connectionId, "topic", topic.name);
   const expanded = useTreeUiStore((s) => s.expanded[key] ?? false);
@@ -176,17 +191,17 @@ function TopicRow({ connectionId, topic, isSelected, onSelect, organizer, pinned
       data-drop-folder={folderId}
     >
       <div
-        className={`resource-item${isSelected ? " resource-item--selected" : ""}${organizer.dragging === topic.name ? " resource-item--dragging" : ""}`}
-        onClick={() => {
+        className={`resource-item${isSelected ? " resource-item--selected" : ""}${organizer.draggingNames.includes(topic.name) ? " resource-item--dragging" : ""}`}
+        onClick={(e) => {
           // The click that ends a drag is not a selection.
           if (organizer.consumeDragClick()) return;
-          onSelect();
+          onClick(e);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
           setTopicMenu({ x: e.clientX, y: e.clientY });
         }}
-        {...organizer.itemDragProps(topic.name)}
+        {...organizer.itemDragProps(topic.name, selectionGroup)}
       >
         <button
           type="button"
@@ -203,7 +218,7 @@ function TopicRow({ connectionId, topic, isSelected, onSelect, organizer, pinned
         <ContextMenu
           x={topicMenu.x}
           y={topicMenu.y}
-          items={organizer.itemMenuItems(topic.name)}
+          items={organizer.itemMenuItems(selectionGroup?.includes(topic.name) ? selectionGroup : topic.name)}
           onClose={() => setTopicMenu(null)}
         />
       )}

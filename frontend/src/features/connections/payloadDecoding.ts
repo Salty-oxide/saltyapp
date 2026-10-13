@@ -183,8 +183,8 @@ export const ROW_OVERHEAD_BYTES = 128;
  *    "Tab memory" and "Payloads (all tabs)" describe the same rows in the
  *    same units. Serialized, a payload counted as its base64 *characters* —
  *    about 4/3 of the bytes they carry — so the two figures disagreed by a
- *    third on any tab fetched with "Fetch message payload" on, and agreed
- *    only when there were no payloads to disagree about.
+ *    third on any tab with payloads, and agreed only when there were no
+ *    payloads to disagree about.
  * 2. **Measuring memory shouldn't allocate a copy of it.** Serializing built
  *    a string as large as everything being measured, on every render of the
  *    bottom panel — which re-renders on every store change, including each
@@ -243,32 +243,30 @@ export function isPayloadTruncated(payloadBase64: string | null, payloadSizeByte
 }
 
 /**
- * The most of any one payload a grid fetch carries back.
+ * The most of any one payload a grid fetch carries back: what a grid cell
+ * decodes, [`VALUE_PREVIEW_BYTES`].
  *
- * Deliberately not [`VALUE_PREVIEW_BYTES`], which the two used to share.
- * That constant is sized for what a *grid cell* decodes — 4 KB, ample for
- * one line — and using it as the transport bound too meant every row of any
- * ordinary JSON or Avro topic arrived truncated. The
- * payload viewer then had nothing whole to show, so opening a message went
- * back to the broker for its real bytes: a fresh consumer, a TLS and SASL
- * handshake, metadata and watermarks, on every single click. Carrying more
- * per row costs memory once, at fetch time, and makes opening anything that
- * fits instant again.
+ * It used to be 256 KB, so that opening an ordinary record needed no second
+ * trip to the broker. That is now the payload cache's job: the backend keeps
+ * every payload over this size, compressed, from the fetch that brought its
+ * preview (`salty_cache`), and opening a row is a lookup there. So the webview
+ * holds a few KB per row instead of up to 256 KB, and a fetch of 1,000 rows
+ * costs it ~4 MB rather than tens of megabytes.
  *
- * 256 KB covers ordinary records many times over while still cutting the
- * multi-megabyte payloads this bound exists to cut.
+ * A row the cache no longer has (evicted, expired after 15 idle minutes, or
+ * refused when the cache was full) falls back to the broker, exactly as a
+ * truncated row always did.
  */
-export const MAX_INLINE_PAYLOAD_BYTES = 256 * 1024;
+export const MAX_INLINE_PAYLOAD_BYTES = VALUE_PREVIEW_BYTES;
 
 /**
  * Total payload bytes one fetch's rows may hold in the webview at once.
  *
- * This is what keeps [`MAX_INLINE_PAYLOAD_BYTES`] from being the memory bug
- * again. A bound applied per row says nothing about what a fetch costs in
- * aggregate — 1,000 rows of multi-megabyte records is what killed the
- * webview — so the per-row bound is priced out of this budget rather than
- * fixed: the more rows a fetch asks for, the less of each payload it
- * carries.
+ * A bound applied per row says nothing about what a fetch costs in aggregate
+ * — 1,000 rows of multi-megabyte records is what killed the webview — so the
+ * per-row bound is priced out of this budget. With the per-row bound now at
+ * [`VALUE_PREVIEW_BYTES`] the budget is only reached by fetches of more than
+ * 16,000 rows; it stays as the guard should the bound be raised again.
  */
 export const PAYLOAD_RETENTION_BUDGET_BYTES = 64 * 1024 * 1024;
 

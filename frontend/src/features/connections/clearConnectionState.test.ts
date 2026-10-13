@@ -8,6 +8,7 @@ import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
 import { useKsqlStore, ksqlWorkspaceKey } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
+import { useTopicMultiSelectStore } from "./useTopicMultiSelectStore";
 import { emptyFilterForm } from "./dataFilters";
 import { emptyMessage } from "./publishMessages";
 import { usePublishDraftStore } from "./usePublishDraftStore";
@@ -125,6 +126,21 @@ beforeEach(() => {
 });
 
 describe("clearConnectionState", () => {
+  it("forgets the cluster's multi-selected topics and consumer groups, in every tab, and keeps the others'", () => {
+    const selection = { names: ["a", "b"], anchor: "a" };
+    useTopicMultiSelectStore.setState({
+      byKey: {
+        [`tab-1:${GONE}:Topics`]: selection,
+        [`tab-2:${GONE}:Consumers`]: selection,
+        [`tab-1:${KEPT}:Topics`]: selection,
+      },
+    });
+
+    clearConnectionState(queryClient, GONE);
+
+    expect(Object.keys(useTopicMultiSelectStore.getState().byKey)).toEqual([`tab-1:${KEPT}:Topics`]);
+  });
+
   it("collapses every tree row of the disconnected cluster, in every tab", () => {
     clearConnectionState(queryClient, GONE);
 

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "backend/core",
   "backend/db",
+  "backend/cache",
   "backend/kafka",
   "backend/avro",
   "backend/protobuf",
@@ -30,6 +31,7 @@ async-trait = "0.1"
 salty-core = { path = "backend/core" }
 salty-db = { path = "backend/db" }
 salty-kafka = { path = "backend/kafka" }
+salty-cache = { path = "backend/cache" }
 salty-avro = { path = "backend/avro" }
 salty-protobuf = { path = "backend/protobuf" }
 salty-schema-registry = { path = "backend/schema-registry" }

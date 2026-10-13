@@ -6,6 +6,7 @@ pub mod client;
 pub mod client_log;
 pub mod config;
 pub mod messages;
+pub mod payload_cache;
 pub mod producer;
 pub mod zookeeper;
 
