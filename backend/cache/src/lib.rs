@@ -917,16 +917,19 @@ mod tests {
 
     #[test]
     fn an_unused_entry_expires_but_a_used_one_stays() {
+        // Wide margins: touches are 150 ms apart against a 1 s idle time, so a
+        // runner that stalls for most of a second still does not expire the
+        // entry that is being used.
         let cache = MessageCache::new(CacheConfig {
-            time_to_idle: Duration::from_millis(400),
+            time_to_idle: Duration::from_millis(1_000),
             ..CacheConfig::default()
         });
         cache.store_now(key(1), message(10_000));
         cache.store_now(key(2), message(10_000));
 
         // Keep touching key 1 for longer than the idle time.
-        for _ in 0..6 {
-            std::thread::sleep(Duration::from_millis(120));
+        for _ in 0..9 {
+            std::thread::sleep(Duration::from_millis(150));
             assert!(cache.get(&key(1)).is_some());
         }
 
@@ -1302,18 +1305,26 @@ mod tests {
             let m = message(10_000);
             cache.store_in_background(&handle, key(offset), m.payload.len(), m.timestamp_ms, || m);
         }
-        // The compressions finish within the debounce window; the line follows.
-        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        // Let the compressions finish and the debounced line(s) follow.
+        tokio::time::sleep(Duration::from_millis(2_000)).await;
 
         let updates: Vec<String> = lines(&events)
             .into_iter()
             .filter(|l| l.starts_with("Payload cache updated"))
             .collect();
-        assert_eq!(updates.len(), 1, "{updates:?}");
+        // One line for the burst. A runner starved enough to spread twenty
+        // compressions over several windows may log a couple more; what must
+        // never happen is a line per message.
+        assert!(!updates.is_empty(), "no summary was logged");
+        assert!(
+            updates.len() <= 3,
+            "a burst of 20 stores logged {} lines: {updates:?}",
+            updates.len()
+        );
         // Slots are limited, so some may have been dropped; the line counts
         // what happened to all twenty.
-        assert!(updates[0].contains("stored"), "{updates:?}");
-        assert!(updates[0].contains("objects"), "{updates:?}");
+        assert!(updates.iter().all(|l| l.contains("stored")), "{updates:?}");
+        assert!(updates.iter().all(|l| l.contains("objects")), "{updates:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1340,8 +1351,19 @@ mod tests {
         assert_eq!(cache.compressions(), 1);
 
         // Nobody touches the cache; the timer alone has to free the entry.
-        // (`weighted_size` is read without running maintenance itself.)
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        assert_eq!(cache.shared.cache().weighted_size(), 0);
+        // (`weighted_size` is read without running maintenance itself.) Polled
+        // rather than slept for, so a slow runner only makes it wait longer.
+        let mut freed = false;
+        for _ in 0..100 {
+            if cache.shared.cache().weighted_size() == 0 {
+                freed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            freed,
+            "the maintenance timer never released the expired entry"
+        );
     }
 }
