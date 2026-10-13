@@ -223,7 +223,7 @@ describe("tabDataPrefix", () => {
     expect(useTabDataStore.getState().payloadBytesByTab["tab-1:1:orders:all"]).toBeUndefined();
   });
 
-  it("replaces the total on a completed Fetch and adds on each per-row payload fetch", () => {
+  it("replaces the total on a completed Fetch and adds on each streamed batch", () => {
     const { setTabPayloadBytes, addTabPayloadBytes } = useTabDataStore.getState();
 
     setTabPayloadBytes("tab-1:1:orders:all", 5_000);

@@ -7,6 +7,7 @@ import { useTreeUiStore } from "./useTreeUiStore";
 import { FolderHeaderRow, NewFolderRow, PinnedLabelRow } from "./OrganizedRows";
 import type { TreeRow } from "./organizeResources";
 import type { ResourceOrganizer } from "./useResourceOrganizer";
+import { useMultiSelect } from "./useMultiSelect";
 
 /** Below this many (post-filter) items, the plain unvirtualized `<ul>` is cheap enough to just render outright — avoids giving small lists an arbitrary fixed-height scroll box for no benefit. */
 const VIRTUALIZE_THRESHOLD = 50;
@@ -56,6 +57,12 @@ export interface ResourceCategoryProps<T> {
    * connection and kind, which this generic component deliberately doesn't know.
    */
   organizer?: ResourceOrganizer;
+  /**
+   * With an organizer, Ctrl/Cmd+click and Shift+click select several items;
+   * this empties the workspace selection (and so the middle and right panes)
+   * while two or more are selected.
+   */
+  onClearSelection?: () => void;
 }
 
 /**
@@ -79,6 +86,7 @@ export function ResourceCategory<T>({
   error,
   notice,
   organizer,
+  onClearSelection,
 }: ResourceCategoryProps<T>) {
   const expanded = useTreeUiStore((s) => s.expanded[key] ?? false);
   const toggleExpanded = useTreeUiStore((s) => s.toggleExpanded);
@@ -111,6 +119,16 @@ export function ResourceCategory<T>({
     ? organizer.rowsFor(filtered, getKey, query, (item) => matchesSearch(item, query))
     : filtered.map((item) => ({ type: "item", item, section: "unfiled" }));
 
+  const multi = useMultiSelect<T>({
+    storeKey: key,
+    items,
+    getName: getKey,
+    isOpen: isSelected,
+    onOpen: onSelect,
+    onClearSelection: onClearSelection ?? (() => {}),
+  });
+  const itemOrder = rows.flatMap((row) => (row.type === "item" ? [getKey(row.item)] : []));
+
   function renderRow(row: TreeRow<T>, style?: CSSProperties) {
     if (row.type === "pinned-label") return <PinnedLabelRow key="pinned-label" style={style} />;
     if (row.type === "folder" && organizer) {
@@ -127,17 +145,21 @@ export function ResourceCategory<T>({
     }
     if (row.type !== "item") return null;
     const item = row.item;
-    const dragging = organizer?.dragging === getKey(item);
+    const dragging = organizer?.draggingNames.includes(getKey(item)) ?? false;
+    const selected = isSelected(item) || (organizer !== undefined && multi.isMultiSelected(getKey(item)));
     return (
       <li
         key={`${row.section}-${getKey(item)}`}
         style={style}
         data-testid={`resource-item-${getKey(item)}`}
         data-drop-folder={row.folderId}
-        className={`resource-item${isSelected(item) ? " resource-item--selected" : ""}${row.folderId ? " resource-row--in-folder" : ""}${dragging ? " resource-item--dragging" : ""}`}
-        onClick={() => {
+        className={`resource-item${selected ? " resource-item--selected" : ""}${row.folderId ? " resource-row--in-folder" : ""}${dragging ? " resource-item--dragging" : ""}`}
+        onClick={(e) => {
           if (organizer?.consumeDragClick()) return;
-          onSelect(item);
+          // Without an organizer (Brokers, Access Control) there is no
+          // multi-selection: every click is a plain one.
+          if (organizer) multi.handleClick(item, e, itemOrder);
+          else onSelect(item);
         }}
         onContextMenu={
           organizer
@@ -148,7 +170,7 @@ export function ResourceCategory<T>({
               }
             : undefined
         }
-        {...(organizer ? organizer.itemDragProps(getKey(item)) : {})}
+        {...(organizer ? organizer.itemDragProps(getKey(item), multi.group) : {})}
       >
         {getLabel(item)}
       </li>
@@ -181,7 +203,7 @@ export function ResourceCategory<T>({
         <ContextMenu
           x={itemMenu.x}
           y={itemMenu.y}
-          items={organizer.itemMenuItems(itemMenu.name)}
+          items={organizer.itemMenuItems(multi.group?.includes(itemMenu.name) ? multi.group : itemMenu.name)}
           onClose={() => setItemMenu(null)}
         />
       )}

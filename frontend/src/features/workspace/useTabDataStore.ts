@@ -94,16 +94,13 @@ interface TabDataState {
    * Payload bytes this tab is currently holding, charged against General
    * settings > Messages > Max Total Fetch Size.
    *
-   * The backend enforces that budget within a single Fetch, but a Data tab
-   * has a second way of pulling payloads into the same cached rows: the
-   * Value column's per-row "Fetch payload" button, which is its own fetch
-   * with its own fresh budget. Left uncounted, the setting bounded one route
-   * into the webview's memory and left the other unbounded — one click at a
-   * time, without limit. This is the running total across both.
+   * The backend enforces that budget within a single Fetch; this is the
+   * running total of what the tab's cached rows hold, including rows
+   * streamed in ahead of the fetch's final result.
    *
-   * Counts bytes *read*, matching `MessageFetchResult.payloadBytesRead`, and
-   * therefore counts nothing for a fetch made with "Fetch message payload"
-   * off — that browse keeps no payloads.
+   * Counts the payload bytes the rows retain, which can be far fewer than
+   * `MessageFetchResult.payloadBytesRead` when each row carries only a
+   * bounded preview.
    */
   payloadBytesByTab: Record<string, number>;
   /**
@@ -125,11 +122,11 @@ interface TabDataState {
   setTabMessages: (tabId: string, messages: TopicMessage[]) => void;
   /** Replaces a tab's payload-byte total — what a completed Fetch reports, which supersedes rather than adds to whatever the previous fetch left. */
   setTabPayloadBytes: (tabId: string, bytes: number) => void;
-  /** Adds to a tab's payload-byte total — one per-row "Fetch payload" click, which retains bytes on top of what the last Fetch already did. */
+  /** Adds to a tab's payload-byte total — a streamed batch of rows, which retains bytes on top of what the Fetch has already delivered. */
   addTabPayloadBytes: (tabId: string, bytes: number) => void;
   /** Records how long the last completed Fetch into a view took, for the count line's "in N ms". */
   setTabFetchDurationMs: (tabId: string, durationMs: number) => void;
-  /** Records the last Fetch's total-matching count separately from the row cache — a single-row payload patch (`fetchPayloadForRow`) replaces a tab's cached rows without knowing (or wanting to overwrite) the total the original Fetch found. */
+  /** Records the last Fetch's total-matching count separately from the row cache — streamed rows are appended without knowing (or wanting to overwrite) the total the Fetch found. */
   setTabTotalMatching: (tabId: string, totalMatching: number) => void;
   /** Appends one streamed message onto a tab's rows — backs the Data tab's live-streaming Fetch, which paints rows in as they arrive instead of waiting for the whole fetch to finish. */
   appendTabMessage: (tabId: string, message: TopicMessage) => void;

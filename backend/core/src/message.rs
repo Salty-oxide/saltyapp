@@ -18,13 +18,8 @@ pub struct MessageFilter {
     /// partition's watermark range rather than erroring on a stale/
     /// out-of-range value.
     pub offset: Option<i64>,
-    /// The Data tab's "Load message payload" checkbox — when false
-    /// (the default), `TopicMessage::payload_base64` comes back `None` for
-    /// every row, so a metadata-only browse doesn't pay for encoding/
-    /// transferring payload bytes it isn't going to show.
-    pub include_payload: bool,
-    /// How many payload bytes to actually carry back per message, when
-    /// `include_payload` is set. `None` means the whole payload.
+    /// How many payload bytes to actually carry back per message. `None`
+    /// means the whole payload.
     ///
     /// The Data tab's grid renders one line per row and searches only the
     /// first few KB of a value, so shipping whole payloads for it bought
@@ -35,9 +30,9 @@ pub struct MessageFilter {
     /// several times the renderer's memory ceiling, so the app hung and was
     /// killed. Bounded here instead, the same fetch moves a few MB.
     ///
-    /// Left `None` by the per-row fetch behind
-    /// `MessagePayloadViewer`/`ValueCell`, which needs the real bytes — one
-    /// message at a time, which is what makes it affordable.
+    /// Left `None` by the single-message fetch behind `MessagePayloadViewer`,
+    /// which needs the real bytes — one message at a time, which is what
+    /// makes it affordable.
     pub max_payload_preview_bytes: Option<u32>,
 }
 
@@ -48,8 +43,8 @@ pub struct MessageFilter {
 /// NOT guaranteed to be valid UTF-8 (e.g. a binary correlation id), so it's
 /// base64-encoded the same way `TopicMessage::payload_base64` is, rather
 /// than lossy-UTF-8-decoded (which would silently corrupt binary values).
-/// Always populated regardless of the "Load message payload" checkbox,
-/// unlike `payload_base64`.
+/// Always populated in full, unlike `payload_base64`, which may be a bounded
+/// preview.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageHeader {
@@ -86,11 +81,11 @@ pub struct MessagesBatchEvent {
     pub messages: Vec<TopicMessage>,
 }
 
-/// One row in the Data tab's AG Grid. `payload_base64` is `None` unless the
-/// "Load message payload" checkbox was checked for this fetch; when
-/// present, it's decoded/rendered client-side (text, JSON, or
-/// Avro-with-Confluent-wire-format detection) when the row is clicked, per
-/// spec: "message payload should be shown when clicked on the message in
+/// One row in the Data tab's AG Grid. `payload_base64` is always filled by a
+/// fetch (possibly a bounded preview — see
+/// `MessageFilter::max_payload_preview_bytes`); it's decoded/rendered
+/// client-side (text, JSON, or Avro-with-Confluent-wire-format detection)
+/// when the row is clicked, per spec: "message payload should be shown when clicked on the message in
 /// right most tab". `key_base64` is base64-encoded rather than decoded to a
 /// plain string for the same reason as `MessageHeader::value_base64` — a
 /// Kafka message key is an arbitrary byte string, not guaranteed text.
@@ -227,17 +222,17 @@ mod tests {
     }
 
     #[test]
-    fn message_filter_serializes_fields_as_camel_case_and_defaults_to_all_none_and_no_payload() {
+    fn message_filter_serializes_fields_as_camel_case_and_defaults_to_all_none() {
         let filter = MessageFilter::default();
         let json = serde_json::to_string(&filter).unwrap();
         assert_eq!(
             json,
-            r#"{"partitions":null,"maxMessagesPerPartition":null,"maxTotalMessages":null,"fromTimestampMs":null,"toTimestampMs":null,"offset":null,"includePayload":false,"maxPayloadPreviewBytes":null}"#
+            r#"{"partitions":null,"maxMessagesPerPartition":null,"maxTotalMessages":null,"fromTimestampMs":null,"toTimestampMs":null,"offset":null,"maxPayloadPreviewBytes":null}"#
         );
     }
 
     /// The grid only ever renders a few KB of a payload, so the Data tab's
-    /// own fetch asks for a bound; the per-row "open this message" fetch
+    /// own fetch asks for a bound; the single-message "open this message" fetch
     /// leaves it `None` to get the real bytes.
     #[test]
     fn message_filter_carries_a_payload_preview_bound() {

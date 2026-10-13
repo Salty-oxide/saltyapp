@@ -503,11 +503,11 @@ async fn a_to_timestamp_in_the_past_matches_nothing() {
     );
 }
 
-/// A message's key and headers travel regardless of the payload checkbox —
-/// they are what the grid renders in a metadata-only browse — while the
-/// payload itself is withheld and only its size reported.
+/// A fetch carries each message's key, headers and payload, with the
+/// payload's true size alongside it (which is what tells a truncated preview
+/// from a whole payload).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_metadata_only_fetch_still_carries_keys_headers_and_payload_sizes() {
+async fn a_fetch_carries_keys_headers_payloads_and_payload_sizes() {
     let client = RdKafkaClient::new();
     let connection = connection(broker!());
 
@@ -521,14 +521,15 @@ async fn a_metadata_only_fetch_still_carries_keys_headers_and_payload_sizes() {
 
     assert_eq!(messages.len(), 2);
     let first = &messages[0];
-    assert!(
-        first.payload_base64.is_none(),
-        "the payload is withheld when it was not asked for"
+    assert_eq!(
+        first.payload_base64.as_deref(),
+        Some(base64_of("body-1").as_str()),
+        "the payload comes with the fetch"
     );
     assert_eq!(
         first.payload_size_bytes,
         Some("body-1".len() as u64),
-        "its size is reported anyway"
+        "and its true size is reported beside it"
     );
     assert_eq!(
         first.key_base64.as_deref(),
@@ -562,7 +563,6 @@ async fn asking_for_payloads_returns_them_base64_encoded() {
         &connection,
         HEADERS_TOPIC,
         MessageFilter {
-            include_payload: true,
             ..MessageFilter::default()
         },
     )
@@ -588,7 +588,6 @@ async fn a_payload_preview_bound_truncates_the_payload_but_not_its_reported_size
         &connection,
         HEADERS_TOPIC,
         MessageFilter {
-            include_payload: true,
             max_payload_preview_bytes: Some(3),
             ..MessageFilter::default()
         },

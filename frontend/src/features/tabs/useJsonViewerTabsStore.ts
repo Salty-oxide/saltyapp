@@ -81,8 +81,8 @@ function defaultName(kind: JsonViewerTabKind): string {
  * "Open in new tab" on a JSON/XML value opens it as a tab in the app's own
  * tab bar (there's no browser to open a real new tab in — this is a desktop
  * webview). These tabs are local-only, ephemeral scratch views — unlike
- * useTabsStore's tabs, they're never persisted to the backend, so a
- * "Fetch payload" click doesn't need a delete/rename/reorder round trip
+ * useTabsStore's tabs, they're never persisted to the backend, so opening one
+ * doesn't need a delete/rename/reorder round trip
  * for something meant to be glanced at and closed.
  */
 export const useJsonViewerTabsStore = create<JsonViewerTabsState>((set) => ({

@@ -183,4 +183,42 @@ describe("ClusterDetailPanel", () => {
     expect(update.mock.calls[0][0]).toMatchObject({ id: "1" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Update" })).toBeDisabled());
   });
+
+  describe("Metrics tab", () => {
+    function connectedBroker(connected: boolean) {
+      setInvokeHandlers({
+        connection_list: () => [sampleConnection()],
+        connection_is_connected: () => connected,
+        connection_list_brokers: () => [{ id: 1, host: "b", port: 9092 }],
+        connection_list_topics: () => [],
+      });
+    }
+
+    it("is not offered while the cluster is not connected", async () => {
+      connectedBroker(false);
+      renderWithClient(<ClusterDetailPanel connectionId="1" />);
+
+      await screen.findByRole("tab", { name: "Properties" });
+      expect(screen.queryByRole("tab", { name: "Metrics" })).not.toBeInTheDocument();
+    });
+
+    it("appears before Query once the cluster is connected", async () => {
+      connectedBroker(true);
+      renderWithClient(<ClusterDetailPanel connectionId="1" />);
+
+      expect(await screen.findByRole("tab", { name: "Metrics" })).toBeInTheDocument();
+      const labels = screen.getAllByRole("tab").map((tab) => tab.textContent);
+      expect(labels.indexOf("Metrics")).toBe(labels.indexOf("Query") - 1);
+    });
+
+    it("opens the cluster's metrics", async () => {
+      connectedBroker(true);
+      const user = userEvent.setup();
+      renderWithClient(<ClusterDetailPanel connectionId="1" />);
+
+      await user.click(await screen.findByRole("tab", { name: "Metrics" }));
+
+      expect(await screen.findByLabelText("Total topics")).toBeInTheDocument();
+    });
+  });
 });

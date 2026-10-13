@@ -1320,11 +1320,6 @@ textarea {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.data-tab-include-payload {
-  margin-bottom: 8px;
-  font-size: var(--font-size-sm);
-  color: var(--color-fg-muted);
-}
 /* The consumer group panel's own topic filter. Was `.data-tab-search`, shared
    with the Data tab's message search until that search was removed; renamed
    rather than left pointing at a rule named for something that no longer
@@ -1391,23 +1386,6 @@ textarea {
 .data-tab-no-rows {
   font-size: var(--font-size-md);
   color: var(--color-fg-muted);
-}
-.value-cell-fetch-button {
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-fg-muted);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-.value-cell-fetch-button:hover {
-  color: var(--color-fg);
-  border-color: var(--color-accent);
-}
-.value-cell-fetch-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .lag-panel-summary {
@@ -1525,6 +1503,42 @@ textarea {
   top: 0;
   z-index: 1;
   background: var(--color-bg);
+}
+/* A header value's copy button: out of sight until its row is hovered or the
+   button itself is focused, so a table of headers stays quiet to read. */
+.message-payload-header-value {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+}
+.message-payload-header-value-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.message-payload-header-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.message-payload-headers-table tbody tr:hover .message-payload-header-copy,
+.message-payload-header-copy:focus-visible,
+.message-payload-header-copy--copied {
+  opacity: 1;
+}
+.message-payload-header-copy:hover {
+  color: var(--color-fg);
+  border-color: var(--color-accent);
 }
 .message-payload-header {
   display: flex;
@@ -3090,4 +3104,113 @@ textarea {
   outline: 1px dashed var(--color-accent);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/* Time-range options in a chart card's header (Rates tab). */
+.metrics-range {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metrics-range__option {
+  padding: 2px 10px;
+  border: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.metrics-range__option:last-child {
+  border-right: 0;
+}
+.metrics-range__option:hover {
+  color: var(--color-fg);
+}
+.metrics-range__option[aria-pressed="true"] {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* Cluster Metrics tab. */
+.metrics-tab__toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+.metrics-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+}
+.metrics-progress progress {
+  flex: 1 1 auto;
+  max-width: 360px;
+}
+.metrics-section-title {
+  margin: 8px 0 0;
+  font-size: var(--font-size-md);
+}
+.metrics-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.metrics-distribution__bar {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--color-border);
+}
+.metrics-distribution__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-xs);
+}
+.metrics-distribution__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 2px;
+}
+/* The topic health overview: a div grid with table roles, so it can be windowed. */
+.metrics-overview {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+}
+.metrics-overview__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
+}
+.metrics-overview__row > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metrics-overview__row--head {
+  background: var(--color-bg-elevated);
+  color: var(--color-fg-muted);
+  font-weight: 600;
+}
+.metrics-overview__body {
+  max-height: 432px;
+  overflow-y: auto;
 }

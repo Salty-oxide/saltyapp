@@ -3,6 +3,7 @@ import { parseDate, validateDateStrings } from "./dataFilters";
 import { ChartCard, StatCard, statNumber, TOP_LIST_MIN, TOP_LIST_SIZE, TopList } from "./metricsChartStyle";
 import { PartitionBarRows } from "./PartitionBarRows";
 import { computePartitionSkew, HIGH_SKEW, skewFromCounts } from "./partitionSkew";
+import { TopicRatesTab } from "./TopicRatesTab";
 import { usePartitionMessageCounts, usePartitions } from "./useClusterResources";
 
 export interface TopicMetricsTabProps {
@@ -12,6 +13,42 @@ export interface TopicMetricsTabProps {
 
 const SKEW_LABEL = { balanced: "Balanced", moderate: "Moderate skew", high: "High skew" } as const;
 const SKEW_TONE = { balanced: "good", moderate: "warn", high: "bad" } as const;
+
+type MetricsSubTabId = "skew" | "rates";
+
+const METRICS_SUB_TABS: { id: MetricsSubTabId; label: string }[] = [
+  { id: "skew", label: "Partition skew" },
+  { id: "rates", label: "Rates" },
+];
+
+/**
+ * The topic's Metrics: partition skew first (what the tab has always shown,
+ * and so the landing view), then produce/consume rates over time.
+ */
+export function TopicMetricsTab({ connectionId, topicName }: TopicMetricsTabProps) {
+  const [subTab, setSubTab] = useState<MetricsSubTabId>("skew");
+
+  return (
+    <div>
+      <div className="connection-modal-tabs" role="tablist" aria-label="Metrics views">
+        {METRICS_SUB_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={subTab === tab.id}
+            className={`connection-modal-tab${subTab === tab.id ? " connection-modal-tab--active" : ""}`}
+            onClick={() => setSubTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {subTab === "skew" && <PartitionSkewView connectionId={connectionId} topicName={topicName} />}
+      {subTab === "rates" && <TopicRatesTab connectionId={connectionId} topicName={topicName} />}
+    </div>
+  );
+}
 
 /**
  * Partition skew: how many messages each partition holds. Kafka spreads keyed
@@ -25,7 +62,7 @@ const SKEW_TONE = { balanced: "good", moderate: "warn", high: "bad" } as const;
  * `count_partition_messages`), so it is cheap, but it assumes timestamps rise
  * with offset and is approximate for producer-assigned timestamps that don't.
  */
-export function TopicMetricsTab({ connectionId, topicName }: TopicMetricsTabProps) {
+function PartitionSkewView({ connectionId, topicName }: TopicMetricsTabProps) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const { data: partitions, isLoading } = usePartitions(connectionId, topicName);

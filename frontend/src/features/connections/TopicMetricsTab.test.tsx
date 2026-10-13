@@ -196,3 +196,29 @@ describe("TopicMetricsTab", () => {
     });
   });
 });
+
+describe("TopicMetricsTab sub-tabs", () => {
+  it("lands on partition skew and offers Rates beside it", async () => {
+    setInvokeHandlers({ connection_list_partitions: () => [part(0, 10), part(1, 30)] });
+    renderWithClient(<TopicMetricsTab connectionId="1" topicName="orders" />);
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Partition skew", "Rates"]);
+    expect(screen.getByRole("tab", { name: "Partition skew" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("Messages per partition")).toBeInTheDocument();
+  });
+
+  it("shows the produce and consume rate charts on the Rates sub-tab", async () => {
+    setInvokeHandlers({
+      connection_list_partitions: () => [part(0, 10)],
+      connection_list_consumer_groups: () => [],
+    });
+    const user = userEvent.setup();
+    renderWithClient(<TopicMetricsTab connectionId="1" topicName="orders" />);
+
+    await user.click(screen.getByRole("tab", { name: "Rates" }));
+
+    expect(await screen.findByRole("heading", { name: "Produce rate" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Consume rate" })).toBeInTheDocument();
+    expect(screen.queryByText("Messages per partition")).not.toBeInTheDocument();
+  });
+});

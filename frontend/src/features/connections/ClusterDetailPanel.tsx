@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { CONNECTION_TABS, ConnectionTabId, ConnectionTabsView } from "./modal/ConnectionTabsView";
 import { KsqlWorkspace } from "../ksql/KsqlWorkspace";
+// Via `metricsTabs`, never directly: that wrapper keeps Recharts out of the initial bundle.
+import { ClusterMetricsTab } from "./metricsTabs";
 import { ConnectionDraft, connectionToDraft, draftsEqual, toNewConnection } from "./modal/draft";
 import { PingResult } from "./modal/PingResult";
 import {
@@ -22,6 +24,17 @@ export interface ClusterDetailPanelProps {
  * others describe how to reach the cluster, this one does something with it.
  */
 const CLUSTER_TABS = [...CONNECTION_TABS, { id: "query" as const, label: "Query" }];
+
+/**
+ * Metrics sits before Query and exists only while connected: it is the
+ * cluster's own figures, which there is nothing to read from a cluster the app
+ * has no session with.
+ */
+const CLUSTER_TABS_CONNECTED = [
+  ...CONNECTION_TABS,
+  { id: "metrics" as const, label: "Metrics" },
+  { id: "query" as const, label: "Query" },
+];
 
 export function ClusterDetailPanel({ connectionId }: ClusterDetailPanelProps) {
   const { data: connections } = useConnectionsQuery();
@@ -90,6 +103,9 @@ export function ClusterDetailPanel({ connectionId }: ClusterDetailPanelProps) {
 
   const isDirty = !draftsEqual(draft, originalDraft);
   const connected = isConnected ?? false;
+  // Metrics is gone once the cluster disconnects, so a panel left on it falls
+  // back to the first tab rather than showing a body with no tab for it.
+  const shownTab: ConnectionTabId = activeTab === "metrics" && !connected ? "properties" : activeTab;
 
   return (
     <div className="cluster-detail-panel">
@@ -102,14 +118,15 @@ export function ClusterDetailPanel({ connectionId }: ClusterDetailPanelProps) {
         // rather than added to `CONNECTION_TABS` because the New Connection
         // modal shares that list, and a half-written connection has nothing to
         // query.
-        tabs={CLUSTER_TABS}
-        activeTab={activeTab}
+        tabs={connected ? CLUSTER_TABS_CONNECTED : CLUSTER_TABS}
+        activeTab={shownTab}
         onTabChange={setActiveTab}
         draft={draft}
         onChange={updateDraft}
         disabled={connected}
       >
-        {activeTab === "query" &&
+        {shownTab === "metrics" && connection && <ClusterMetricsTab connectionId={connection.id} />}
+        {shownTab === "query" &&
           (connection ? (
             <KsqlWorkspace connectionId={connection.id} scope="cluster" />
           ) : (

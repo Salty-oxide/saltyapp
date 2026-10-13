@@ -7,10 +7,10 @@
 //! that default, a 30,000-message fetch spent 7,050 ms, of which 7,000 ms was
 //! seven one-second stalls and ~50 ms was the work.
 //!
-//! Nothing about that was visible through the payload switch: the broker
-//! sends whole records either way and they fill the same queue either way, so
-//! the fetch was equally slow with "Fetch message payload" off — which is
-//! what made it look like a client-side cost.
+//! Nothing about that was visible in what the fetch carried back: the broker
+//! sends whole records regardless and they fill the same queue, so the stall
+//! was independent of payload size — which is what made it look like a
+//! client-side cost.
 //!
 //! The unit test `a_lowered_prefetch_queue_comes_with_a_lowered_queue_backoff`
 //! pins the two properties against each other with no broker. This one pins
@@ -91,12 +91,11 @@ fn browse_filter() -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload: true,
         max_payload_preview_bytes: Some(4096),
     }
 }
 
-fn filter(include_payload: bool) -> MessageFilter {
+fn filter() -> MessageFilter {
     MessageFilter {
         partitions: None,
         max_messages_per_partition: Some(MESSAGES),
@@ -104,7 +103,6 @@ fn filter(include_payload: bool) -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload,
         max_payload_preview_bytes: Some(4096),
     }
 }
@@ -124,7 +122,7 @@ fn filter(include_payload: bool) -> MessageFilter {
 /// be (it is not `Send`).
 static BROKER: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-async fn fetch(include_payload: bool) -> Option<(Duration, usize)> {
+async fn fetch() -> Option<(Duration, usize)> {
     let bootstrap = bootstrap_servers()?;
     let client = RdKafkaClient::new();
     let connection = connection(bootstrap);
@@ -133,7 +131,7 @@ async fn fetch(include_payload: bool) -> Option<(Duration, usize)> {
         .fetch_messages(
             &connection,
             TOPIC,
-            &filter(include_payload),
+            &filter(),
             None,
             Duration::from_secs(30),
             1_048_576,
@@ -148,15 +146,12 @@ async fn fetch(include_payload: bool) -> Option<(Duration, usize)> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_large_fetch_does_not_stall_on_the_prefetch_queue_backoff() {
     let _serial = BROKER.lock().await;
-    let Some((elapsed, count)) = fetch(false).await else {
+    let Some((elapsed, count)) = fetch().await else {
         eprintln!("skipped: set SALTY_E2E_BOOTSTRAP (and run scripts/e2e-fixtures.sh)");
         return;
     };
 
-    println!(
-        "metadata-only fetch of {count} messages: {} ms",
-        elapsed.as_millis()
-    );
+    println!("fetch of {count} messages: {} ms", elapsed.as_millis());
     assert_eq!(
         count, MESSAGES as usize,
         "the fixture topic is not the expected size"
@@ -166,27 +161,6 @@ async fn a_large_fetch_does_not_stall_on_the_prefetch_queue_backoff() {
         "fetching {count} messages took {} ms. Each whole second in that figure is one \
          `fetch.queue.backoff.ms` stall against the lowered `queued.max.messages.kbytes` — \
          see `fetch_consumer_config`.",
-        elapsed.as_millis(),
-    );
-}
-
-/// The stall was independent of the payload switch, so the guard has to be
-/// too — otherwise a regression could hide in whichever mode is untested.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_same_holds_when_payloads_are_fetched() {
-    let _serial = BROKER.lock().await;
-    let Some((elapsed, count)) = fetch(true).await else {
-        eprintln!("skipped: set SALTY_E2E_BOOTSTRAP (and run scripts/e2e-fixtures.sh)");
-        return;
-    };
-
-    println!(
-        "payload fetch of {count} messages: {} ms",
-        elapsed.as_millis()
-    );
-    assert!(
-        elapsed < BUDGET,
-        "fetching {count} messages with payloads took {} ms",
         elapsed.as_millis(),
     );
 }

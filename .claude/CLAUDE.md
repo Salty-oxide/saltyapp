@@ -215,6 +215,41 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   shard consumers with a non-blocking sweep plus a 5 ms blocking slice, which
   is the one thing `StreamConsumer` would otherwise buy, and it carries the
   cancellation / byte-budget / idle-timeout logic inline.
+- **Payloads over 4 KB are served from `salty-cache`, not carried by the grid.**
+  `backend/cache` is its own crate (moka 0.12 + zstd, knows nothing of Kafka);
+  `RdKafkaClient` holds the one shared instance. The fetch loop copies each
+  payload over 4 KB into it *in the background* — at most 4 compressions in
+  flight, a store is **dropped** rather than queued when they are busy, because
+  queueing would hold a copy of every payload in a fast fetch. Opening a row
+  sends the same `connection_fetch_messages` as before (one partition, an
+  offset, total 1, no preview cap); `fetch_messages` recognises that
+  (`point_read_target`) and answers from the cache with no consumer and no
+  handshake, otherwise falling through to the broker, whose result fills the
+  entry. So no Tauri command changed. Decisions that are easy to undo by
+  accident: the grid's inline bound is **4 KB** (`MAX_INLINE_PAYLOAD_BYTES =
+  VALUE_PREVIEW_BYTES`), not the 256 KB it was, because the cache is what makes
+  a larger one unnecessary; zstd level is **10**, not 22 — measured on 4 MB of
+  JSON, 22 is 1.3 MB/s and no smaller than 19, and a bounded number of
+  compressions at that speed caches almost nothing from a big fetch; the key
+  includes the **connection id**, since two clusters share topic names and
+  offsets; and expiry is time-to-*idle* (15 min, reset on read), not TTL. The
+  cache answers without asking the broker, so it must not outlive what filled
+  it: `release()` (disconnect, delete, idle disconnect, config update) purges
+  the connection, and a fetch that sees a high watermark at or below an
+  already-cached offset purges the topic (delete + recreate). Past 1 GiB of
+  *compressed* bytes moka's own TinyLFU/LRU policy decides, so a new entry may
+  be refused — which only means the next click goes to the broker, as it did
+  before the cache. `backend/kafka/tests/payload_cache.rs` is the e2e check.
+  The size is the **Payload Cache Size (MB)** setting (General; default 1 GiB,
+  0 = off, otherwise 64 MB–4 GB) in `kafkaoxide.generalSettings`. The frontend
+  states it to the backend at every start and on change
+  (`usePayloadCacheLimitSync` -> `set_payload_cache_limit`); an unchanged value
+  is a no-op there, because a *change* builds a new, empty cache — moka cannot
+  resize in place — so do not "simplify" that into pushing it on every fetch.
+  The field applies on blur/Enter, not per keystroke, for the same reason.
+  **Clear memory** also calls `clear_payload_cache` (before the working-set
+  trim, which can only return pages already freed); the cache is app-wide, so
+  that empties it for every tab, costing them only speed.
 - `package-lock.json` and `Cargo.lock` are both gitignored — installs are not lockfile-pinned.
 - Coverage is enforced at 80% (lines/statements/functions/branches) by
   `frontend/vitest.config.ts`'s `thresholds`, so `npm --prefix frontend run test:coverage`
@@ -283,9 +318,67 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   opened every node (`useState(true)`) and is unchanged. The cost of the
   default: a flatten now walks the whole document, so collapsing one node in a
   4 MB payload rebuilds ~300k rows.
-- **Recharts is lazy like AG Grid.** The consumer group and topic Metrics tabs
-  load through `features/connections/metricsTabs.tsx`; import them from there,
-  not from their own modules. The lag-over-time series is built from samples
+- **Ctrl/Cmd+click and Shift+click select several topics or consumer groups,
+  and while two or more are selected the middle and right panes are empty.**
+  The set (`useTopicMultiSelectStore`, keyed by the list's tab-scoped tree key)
+  is deliberately *separate* from the workspace selection, with one invariant
+  holding it together: it exists only while the workspace selection is `null`.
+  `useMultiSelect` enforces that both ways — entering the set clears the
+  selection first, and any other selection (a broker, a partition, another
+  list) drops the set — and `clearConnectionState` drops a cluster's sets.
+  The right pane goes because `App.tsx` already clears the viewed message when
+  the selection stops matching it. One selected item opens normally; Escape and
+  a plain click leave the set; the right-click menu and a drag act on the whole
+  set when the pressed row belongs to it. macOS Ctrl+click is a context click,
+  which is why Cmd is the toggle there. Moves run one write at a time.
+- **`closeAppWindow` calls `destroy()`, not `close()`, and the window's own
+  close is always held back.** `onCloseRequested` (`lib/appWindow.ts`)
+  `preventDefault`s every native close — title-bar button, Alt+F4, Cmd+W — and
+  `CloseConfirmation` asks "Close application?". `close()` would raise another
+  close request and so prompt a second time for a caller (the last-tab flow)
+  that has already asked. `destroy()` needs `core:window:allow-destroy` in
+  `src-tauri/capabilities/default.json`; without it confirming silently does
+  nothing.
+- **There is no "Fetch message payload" checkbox and no per-row "Fetch payload"
+  button, on purpose.** Every fetch carries each payload up to the bound the
+  frontend sends (`maxPayloadPreviewBytes`, now 4 KB — see the payload-cache
+  bullet), and `MessageFilter` has no `include_payload`. `TopicMessage.
+  payload_base64` is still an `Option`, always `Some` from the backend; the
+  viewer keeps a "No payload." fallback for a `null`. Do not reintroduce a
+  switch for it: opening a truncated row is the cache's or the broker's job,
+  one message at a time.
+- **Topic Rates (the Metrics tab's second sub-tab) are built from samples the
+  app takes itself and live in memory only.** Kafka reports counters, not
+  history: produced = change in the topic's high watermarks, consumed = change
+  in its non-`Empty` consumer groups' committed offsets, all groups combined,
+  and a group counts only once it appears in two consecutive samples (one that
+  joins carries a large offset that is not consumption). A counter that goes
+  backwards contributes 0, and an unsampled interval is a *gap*, not a zero.
+  Sampling (`topicRateSampler`) runs every 30 s only while the app is in front
+  — the same rule as the rest of the polling, because these calls count as use
+  of the pooled clients — and is bounded: at most 5 topics at once (the one
+  viewed longest ago is dropped), a topic nobody has had open for 30 minutes
+  stops, and 3 consecutive failures stop it. History is kept as 1-minute
+  buckets for 30 days; a restart starts empty, so 7d/30d show only what was
+  observed.
+- **The cluster Metrics tab reads every topic's partitions and config when it
+  is opened, and reuses the last analysis for 60 s.** That is two broker calls
+  per topic at 6 in parallel with a progress bar, never in the background;
+  Refresh always re-reads, and the result is dropped with the cluster's other
+  contents on disconnect. Definitions (`clusterHealth.ts`, all pure): a topic
+  is *critical* below `min.insync.replicas`, *high* when under-replicated,
+  *elevated* with no redundancy to spare (RF 1, or min ISR = RF), else *low*;
+  leader spread is the most leaders on one broker over the even share
+  (rounded up, so fewer partitions than brokers is "even"); the health score
+  is 100 minus up to 50 / 25 / 15 / 10 for critical / under-replicated /
+  uneven-leader / skewed topics, each in proportion to their share. There is no
+  average-message-size column because the broker does not report one. The
+  overview table is a div grid with table roles, windowed past 50 rows — a
+  `<table>` cannot be.
+- **Recharts is lazy like AG Grid.** The consumer group Metrics tab, the topic
+  Metrics tab (whose Rates sub-tab rides in the same chunk) and the cluster
+  Metrics tab load through `features/connections/metricsTabs.tsx`; import them
+  from there, not from their own modules. The lag-over-time series is built from samples
   the app takes itself (`useLagHistoryStore`, one per Refresh, in memory,
   capped at 200) because Kafka only reports the present. The per-partition bar
   charts (`PartitionBarRows`) never shrink their bars: each has a fixed width
@@ -353,6 +446,9 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   name and a message count, not settings); Config is last because it is the one
   read-only tab, showing the broker's own settings for the topic via
   `useTopicConfig` -> `connection_describe_topic_config`.
+- The cluster panel adds two tabs to the connection's own: **Metrics**, only
+  while the cluster is connected (a disconnect while it is open falls back to
+  Properties), and **Query**, last. The New Connection modal has neither.
 - The connection modal / cluster panel tabs are **Properties, Security &
   Authentication, Schema**. Security and Authentication were merged because
   the protocol chosen in one decides whether the other is needed at all; the

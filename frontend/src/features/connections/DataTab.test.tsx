@@ -273,19 +273,7 @@ describe("DataTab", () => {
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
 
-  it("shows a 'Fetch message payload' checkbox above Fetch/Stop, checked by default", () => {
-    const { container } = renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    const checkbox = screen.getByLabelText("Fetch message payload");
-    expect(checkbox).toBeChecked();
-    // Above, not below: the checkbox decides what Fetch will do, so it has
-    // to be readable before the button is pressed rather than after.
-    const controls = container.querySelector(".data-tab-controls") as HTMLElement;
-    expect(checkbox.closest("label")!.compareDocumentPosition(controls)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-  });
-
-  it("fetches messages with a default-capped filter, payload included, when Fetch is clicked with no filters touched", async () => {
+  it("fetches messages with a default-capped filter when Fetch is clicked with no filters touched", async () => {
     const fetchMessages = vi.fn(() => ({ messages: [], totalMatching: 0 }));
     setInvokeHandlers({ connection_fetch_messages: fetchMessages });
     const user = userEvent.setup();
@@ -304,7 +292,6 @@ describe("DataTab", () => {
           fromTimestampMs: null,
           toTimestampMs: null,
           offset: null,
-          includePayload: true,
           maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
         },
         requestId: expect.any(String),
@@ -328,24 +315,6 @@ describe("DataTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent('"Max messages per partition" is required');
     expect(fetchMessages).not.toHaveBeenCalled();
-  });
-
-  it("has Fetch message payload checked by default, and sends includePayload false once it is unchecked", async () => {
-    const fetchMessages = vi.fn(() => ({ messages: [], totalMatching: 0 }));
-    setInvokeHandlers({ connection_fetch_messages: fetchMessages });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    const checkbox = screen.getByLabelText("Fetch message payload");
-    expect(checkbox).toBeChecked();
-    await user.click(checkbox);
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-
-    await waitFor(() =>
-      expect(fetchMessages).toHaveBeenCalledWith(
-        expect.objectContaining({ filter: expect.objectContaining({ includePayload: false }) }),
-      ),
-    );
   });
 
   it("applies entered filters when Fetch is clicked", async () => {
@@ -520,7 +489,6 @@ describe("DataTab", () => {
     expect(screen.getByLabelText("Offset")).toBeDisabled();
     expect(screen.getByLabelText(/^From/)).toBeDisabled();
     expect(screen.getByLabelText(/^To(\s|$)/)).toBeDisabled();
-    expect(screen.getByLabelText("Fetch message payload")).toBeDisabled();
   });
 
   it("re-enables the filters once the fetch finishes", async () => {
@@ -1019,23 +987,6 @@ describe("DataTab", () => {
     expect(fetchMessages.mock.calls[0][0].filter.maxPayloadPreviewBytes).toBe(MAX_INLINE_PAYLOAD_BYTES);
   });
 
-  it("bounds the per-row payload fetch too, at the bound that lets the viewer open it without refetching", async () => {
-    const initial = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: null, payloadSizeBytes: 9000 },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages: initial, totalMatching: 1 }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(lastGridProps?.rowData).toEqual(initial));
-
-    const perRowFetch = vi.fn((_args: { filter: MessageFilter }) => ({ messages: [], totalMatching: 0 }));
-    setInvokeHandlers({ connection_fetch_messages: perRowFetch });
-    await lastGridProps?.context.fetchPayload(initial[0]);
-
-    expect(perRowFetch.mock.calls[0][0].filter.maxPayloadPreviewBytes).toBe(MAX_INLINE_PAYLOAD_BYTES);
-  });
-
   // Counts say nothing about size on a topic of large records, so a fetch can
   // stop for a reason the row count alone cannot express. Silently showing
   // fewer rows would read as "that's all there is".
@@ -1112,62 +1063,6 @@ describe("DataTab", () => {
     resolveFetch({ messages: [], totalMatching: 0 });
   });
 
-  it("does not open the viewer when the row click originated from a button (e.g. Fetch payload)", () => {
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    const message = { partition: 0, offset: 5, timestampMs: null, keyBase64: null, payloadBase64: null };
-    const button = document.createElement("button");
-
-    lastGridProps?.onRowClicked({ data: message, event: { target: button } });
-
-    expect(useMessageViewerStore.getState().message).toBeNull();
-  });
-
-  it("passes a context.fetchPayload that fetches just one row's payload and patches it into the cached rows", async () => {
-    const initial = [
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: null, payloadBase64: null },
-      { partition: 1, offset: 2, timestampMs: null, keyBase64: null, payloadBase64: null },
-    ];
-    setInvokeHandlers({ connection_fetch_messages: () => ({ messages: initial, totalMatching: initial.length }) });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(lastGridProps?.rowData).toEqual(initial));
-
-    const fetchMessages = vi.fn(() => ({
-      messages: [{ partition: 0, offset: 1, timestampMs: null, keyBase64: "k", payloadBase64: "eA==" }],
-      totalMatching: 1,
-    }));
-    setInvokeHandlers({ connection_fetch_messages: fetchMessages });
-    await lastGridProps?.context.fetchPayload(initial[0]);
-
-    expect(fetchMessages).toHaveBeenCalledWith({
-      id: "1",
-      topic: "orders",
-      filter: {
-        partitions: [0],
-        maxMessagesPerPartition: 1,
-        maxTotalMessages: 1,
-        fromTimestampMs: null,
-        toTimestampMs: null,
-        offset: 1,
-        includePayload: true,
-        maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
-      },
-      requestId: expect.any(String),
-      readTimeoutMs: 10_000,
-      maxMessageSizeBytes: 1_048_576,
-      maxTotalPayloadBytes: 536_870_912,
-      // A single-row fetch streams nothing: its events would only be
-      // discarded by the listener above, which matches on the grid fetch's
-      // request id.
-      streamUpdates: false,
-    });
-    expect(lastGridProps?.rowData).toEqual([
-      { partition: 0, offset: 1, timestampMs: null, keyBase64: "k", payloadBase64: "eA==" },
-      initial[1],
-    ]);
-  });
   // --- Selected-row highlight ---------------------------------------------
   //
   // The grid's highlight is driven from the message viewer store rather than
@@ -1429,23 +1324,6 @@ describe("DataTab", () => {
   });
   const held = (key = TAB_KEY) => useTabDataStore.getState().payloadBytesByTab[key];
 
-  it("charges the tab nothing when a Fetch ran with the payload checkbox off", async () => {
-    useTabsStore.setState({ tabs: [], activeTabId: "tab-1", error: null });
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [row(4_000_000, null)],
-        totalMatching: 1,
-        payloadBytesRead: 0,
-      }),
-    });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-
-    await waitFor(() => expect(held()).toBe(0));
-  });
-
   // The heart of the change: a browse of 4 MB records keeps only a bounded
   // slice of each, so charging it the 4 MB it read off the broker massively
   // over-counted what the webview was actually holding.
@@ -1461,100 +1339,16 @@ describe("DataTab", () => {
     });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByLabelText("Fetch message payload"));
 
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
     await waitFor(() => expect(held()).toBe(8_192));
   });
 
-  it("adds only the bytes a lazily fetched row actually keeps", async () => {
-    useTabsStore.setState({ tabs: [], activeTabId: "tab-1", error: null });
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({ messages: [row(3_000_000, null)], totalMatching: 1, payloadBytesRead: 0 }),
-    });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(held()).toBe(0));
-
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [row(3_000_000, 2_048)],
-        totalMatching: 1,
-        payloadBytesRead: 3_000_000,
-      }),
-    });
-    await lastGridProps?.context.fetchPayload(row(3_000_000, null));
-
-    expect(held()).toBe(2_048);
-  });
-
-  // The button that runs this only appears on a row with no payload, so the
-  // charge below is normally the whole of what arrives. It is a *replacement*
-  // all the same: whatever the row was holding is dropped in the same
-  // update, and charging the tab for the new payload without crediting the
-  // old one counts bytes nobody holds.
-  it("credits the preview a per-row fetch replaces rather than charging for both", async () => {
-    useTabsStore.setState({ tabs: [], activeTabId: "tab-1", error: null });
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [row(3_000_000, 1_024)],
-        totalMatching: 1,
-        payloadBytesRead: 3_000_000,
-      }),
-    });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByLabelText("Fetch message payload"));
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(held()).toBe(1_024));
-
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [row(3_000_000, 4_096)],
-        totalMatching: 1,
-        payloadBytesRead: 3_000_000,
-      }),
-    });
-    await lastGridProps?.context.fetchPayload(row(3_000_000, 1_024));
-
-    expect(held()).toBe(4_096);
-  });
-
-  it("keeps adding across per-row fetches of different rows rather than replacing the total", async () => {
-    useTabsStore.setState({ tabs: [], activeTabId: "tab-1", error: null });
-    const rowAt = (offset: number, retained: number | null) => ({ ...row(1_000_000, retained), offset });
-    setInvokeHandlers({
-      connection_fetch_messages: () => ({
-        messages: [rowAt(1, null), rowAt(2, null), rowAt(3, null)],
-        totalMatching: 3,
-        payloadBytesRead: 0,
-      }),
-    });
-    const user = userEvent.setup();
-    renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(lastGridProps?.rowData).toHaveLength(3));
-
-    setInvokeHandlers({
-      connection_fetch_messages: (args: { filter: MessageFilter }) => ({
-        messages: [rowAt(args.filter.offset!, 1_024)],
-        totalMatching: 1,
-        payloadBytesRead: 1_000_000,
-      }),
-    });
-    await lastGridProps?.context.fetchPayload(rowAt(1, null));
-    await lastGridProps?.context.fetchPayload(rowAt(2, null));
-    await lastGridProps?.context.fetchPayload(rowAt(3, null));
-
-    expect(held()).toBe(3_072);
-  });
-
   // Eviction, not refusal. The click is one message; refusing it while the
   // app holds megabytes of colder rows in other tabs protects the wrong
   // thing, and frees nothing.
-  it("evicts a colder view's rows rather than refusing a per-row payload fetch", async () => {
+  it("evicts a colder view's rows rather than refusing a fetch", async () => {
     useTabsStore.setState({ tabs: [], activeTabId: "tab-1", error: null });
     const COLD = "tab-2:1:archive:all";
     useTabDataStore.setState({
@@ -1566,24 +1360,20 @@ describe("DataTab", () => {
     });
     useGeneralSettingsStore.setState({ maxTotalFetchBytes: 10_000 });
     setInvokeHandlers({
-      connection_fetch_messages: () => ({ messages: [row(5_000, null)], totalMatching: 1, payloadBytesRead: 0 }),
+      connection_fetch_messages: () => ({
+        messages: [row(5_000, 5_000)],
+        totalMatching: 1,
+        payloadBytesRead: 5_000,
+      }),
     });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
+
     await user.click(screen.getByRole("button", { name: "Fetch" }));
-    await waitFor(() => expect(lastGridProps?.rowData).toHaveLength(1));
 
-    const perRowFetch = vi.fn(() => ({
-      messages: [row(5_000, 5_000)],
-      totalMatching: 1,
-      payloadBytesRead: 5_000,
-    }));
-    setInvokeHandlers({ connection_fetch_messages: perRowFetch });
-    await lastGridProps?.context.fetchPayload(row(5_000, null));
-
-    // The click went through...
-    expect(perRowFetch).toHaveBeenCalledTimes(1);
-    expect(held()).toBe(5_000);
+    // The fetch went through...
+    await waitFor(() => expect(held()).toBe(5_000));
+    expect(lastGridProps?.rowData).toHaveLength(1);
     // ...and the cold view in the other tab gave up its rows to fit.
     expect(held(COLD)).toBeUndefined();
     expect(useTabDataStore.getState().messagesByTab[COLD]).toBeUndefined();
@@ -1607,7 +1397,6 @@ describe("DataTab", () => {
     });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByLabelText("Fetch message payload"));
 
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
@@ -1629,7 +1418,6 @@ describe("DataTab", () => {
     });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByLabelText("Fetch message payload"));
 
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
@@ -1820,14 +1608,12 @@ describe("DataTab", () => {
     });
     const user = userEvent.setup();
     renderWithClient(<DataTab connectionId="1" topicName="orders" />);
-    await user.click(screen.getByLabelText("Fetch message payload"));
     await user.click(screen.getByRole("button", { name: "Fetch" }));
     await waitFor(() => expect(held()).toBe(3_000));
 
     setInvokeHandlers({
       connection_fetch_messages: () => ({ messages: [row(3_000, null)], totalMatching: 1, payloadBytesRead: 0 }),
     });
-    await user.click(screen.getByLabelText("Fetch message payload"));
     await user.click(screen.getByRole("button", { name: "Fetch" }));
 
     await waitFor(() => expect(held()).toBe(0));

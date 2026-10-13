@@ -144,7 +144,6 @@ async fn read_partition(
 ) -> Vec<TopicMessage> {
     let filter = MessageFilter {
         partitions: Some(vec![partition]),
-        include_payload: true,
         ..MessageFilter::default()
     };
     client

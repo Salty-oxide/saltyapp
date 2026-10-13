@@ -24,12 +24,24 @@ export const TOOLTIP_PROPS = {
 
 export const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
-export function ChartCard({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+export function ChartCard({
+  title,
+  hint,
+  actions,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  /** Controls shown in the card's header, to the right of the title. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="metrics-card">
       <header className="metrics-card__header">
         <h3 className="metrics-card__title">{title}</h3>
         {hint && <span className="metrics-card__hint">{hint}</span>}
+        {actions}
       </header>
       {children}
     </section>

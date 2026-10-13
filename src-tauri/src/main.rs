@@ -265,6 +265,8 @@ fn main() {
             commands::tabs::tab_delete,
             commands::tabs::tab_reorder,
             commands::system::trim_process_memory,
+            commands::system::clear_payload_cache,
+            commands::system::set_payload_cache_limit,
             commands::system::payload_save,
         ])
         .run(tauri::generate_context!())

@@ -88,7 +88,6 @@ fn filter(max_total_messages: Option<u32>) -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload: true,
         // Measures what a fetch costs on the wire, which preview truncation
         // does not change — librdkafka still receives the whole record.
         max_payload_preview_bytes: None,

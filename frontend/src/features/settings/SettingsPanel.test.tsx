@@ -9,6 +9,7 @@ import { DEFAULT_THEME_ID } from "../theme/themes";
 import {
   DEFAULT_BROKER_READ_TIMEOUT_MS,
   DEFAULT_MAX_MESSAGE_SIZE_BYTES,
+  DEFAULT_PAYLOAD_CACHE_BYTES,
   DEFAULT_ZOOKEEPER_TIMEOUT_MS,
   useGeneralSettingsStore,
 } from "./useGeneralSettingsStore";
@@ -25,6 +26,7 @@ beforeEach(() => {
     zookeeperTimeoutMs: DEFAULT_ZOOKEEPER_TIMEOUT_MS,
     brokerReadTimeoutMs: DEFAULT_BROKER_READ_TIMEOUT_MS,
     maxMessageSizeBytes: DEFAULT_MAX_MESSAGE_SIZE_BYTES,
+    payloadCacheBytes: DEFAULT_PAYLOAD_CACHE_BYTES,
   });
   document.documentElement.style.removeProperty("--font-family-base");
 });
@@ -100,6 +102,77 @@ describe("SettingsPanel General tab", () => {
     fireEvent.change(input, { target: { value: "2097152" } });
 
     expect(useGeneralSettingsStore.getState().maxMessageSizeBytes).toBe(2097152);
+  });
+});
+
+describe("SettingsPanel payload cache size", () => {
+  const MB = 1024 * 1024;
+  const field = () => screen.getByLabelText("Payload cache size (MB)");
+
+  it("shows the default in megabytes", () => {
+    render(<SettingsPanel />);
+    expect(field()).toHaveValue(1024);
+  });
+
+  it("applies and persists the size when the field is left", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "512" } });
+    // Not applied while typing: applying empties the backend cache.
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(DEFAULT_PAYLOAD_CACHE_BYTES);
+    fireEvent.blur(field());
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(512 * MB);
+    expect(JSON.parse(localStorage.getItem("kafkaoxide.generalSettings") ?? "{}").payloadCacheBytes).toBe(512 * MB);
+  });
+
+  it("applies the size on Enter", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "256" } });
+    fireEvent.keyDown(field(), { key: "Enter" });
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(256 * MB);
+  });
+
+  it("raises a value below the minimum to it, and shows that", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "10" } });
+    fireEvent.blur(field());
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(64 * MB);
+    expect(field()).toHaveValue(64);
+  });
+
+  it("holds a value above the maximum to it", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "99999" } });
+    fireEvent.blur(field());
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(4096 * MB);
+    expect(field()).toHaveValue(4096);
+  });
+
+  it("accepts 0 as off and says so", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "0" } });
+    fireEvent.blur(field());
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(0);
+    expect(screen.getByText(/The cache is off\./)).toBeInTheDocument();
+  });
+
+  it("puts the stored value back when the box is emptied", () => {
+    render(<SettingsPanel />);
+
+    fireEvent.change(field(), { target: { value: "" } });
+    fireEvent.blur(field());
+
+    expect(useGeneralSettingsStore.getState().payloadCacheBytes).toBe(DEFAULT_PAYLOAD_CACHE_BYTES);
+    expect(field()).toHaveValue(1024);
   });
 });
 

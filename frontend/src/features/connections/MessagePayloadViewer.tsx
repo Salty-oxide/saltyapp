@@ -172,6 +172,50 @@ function literalBodyFor(mode: ValueMode, payloadBase64: string, text: string, sh
   return null;
 }
 
+/**
+ * A header's value, with a copy button that appears while its row is hovered
+ * (or focused, so keyboard users can reach it). A header with no value has
+ * nothing to copy, so it shows `null` and no button.
+ */
+function HeaderValueCell({ headerKey, text }: { headerKey: string; text: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  if (text === null) return <em>null</em>;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text as string);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <span className="message-payload-header-value">
+      <span className="message-payload-header-value-text">{text}</span>
+      <button
+        type="button"
+        className={`message-payload-header-copy${copied ? " message-payload-header-copy--copied" : ""}`}
+        aria-label={`${copied ? "Copied" : "Copy"} value of ${headerKey}`}
+        title={copied ? "Copied!" : "Copy value"}
+        onClick={() => void copy()}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </span>
+  );
+}
+
 export function MessagePayloadViewer() {
   const message = useMessageViewerStore((s) => s.message);
   const connectionId = useMessageViewerStore((s) => s.connectionId);
@@ -586,7 +630,9 @@ export function MessagePayloadViewer() {
                   {message.headers.map((header, index) => (
                     <tr key={index}>
                       <td>{header.key}</td>
-                      <td>{base64ToDisplayText(header.valueBase64) ?? <em>null</em>}</td>
+                      <td>
+                        <HeaderValueCell headerKey={header.key} text={base64ToDisplayText(header.valueBase64)} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -599,9 +645,7 @@ export function MessagePayloadViewer() {
       {activeTab === "value" && (
         <div role="tabpanel" aria-label="Value" className="message-payload-panel">
           {text === null ? (
-            <p className="resizable-pane-placeholder">
-              Payload wasn't loaded for this fetch — check "Fetch message payload" above Fetch, then Fetch again.
-            </p>
+            <p className="resizable-pane-placeholder">No payload.</p>
           ) : (
             <>
               {isShowingPreviewOnly && (

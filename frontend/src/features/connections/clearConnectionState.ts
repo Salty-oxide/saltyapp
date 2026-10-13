@@ -5,9 +5,13 @@ import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionSt
 import { useDataTabFiltersStore } from "./useDataTabFiltersStore";
 import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
 import { useLagHistoryStore } from "./useLagHistoryStore";
+import { stopSamplingForConnection } from "./topicRateSampler";
+import { useTopicRateStore } from "./useTopicRateStore";
+import { forgetClusterHealth } from "./clusterHealthCache";
 import { usePublishDraftStore } from "./usePublishDraftStore";
 import { useKsqlStore } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
+import { useTopicMultiSelectStore } from "./useTopicMultiSelectStore";
 
 /**
  * React Query roots holding data *read from* a cluster, as opposed to facts
@@ -89,8 +93,21 @@ export function clearConnectionState(queryClient: QueryClient, connectionId: str
   // session they ended.
   usePublishDraftStore.getState().clearForConnection(connectionId);
 
+  // Topics and consumer groups ctrl/shift-selected in the tree — the middle
+  // pane is empty while they are, so a set that outlived its cluster would
+  // keep rows highlighted that no longer exist.
+  useTopicMultiSelectStore.getState().clearForConnection(connectionId);
+
   // The lag-over-time samples for this cluster's consumer groups.
   useLagHistoryStore.getState().clearForConnection(connectionId);
+
+  // And the topics' produce/consume rate history — with the samplers that fill
+  // it, which would otherwise keep asking a cluster that has no session.
+  stopSamplingForConnection(connectionId);
+  useTopicRateStore.getState().clearForConnection(connectionId);
+
+  // The cluster Metrics tab's last analysis.
+  forgetClusterHealth(connectionId);
 
   // And every ksqlDB workspace for this cluster: the editor's text, and the
   // rows a query left behind. A running query is already stopped by the

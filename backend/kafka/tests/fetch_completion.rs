@@ -127,7 +127,6 @@ fn browse(max: u32) -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload: true,
         max_payload_preview_bytes: Some(4096),
     }
 }

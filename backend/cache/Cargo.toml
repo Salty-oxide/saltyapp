@@ -1,0 +1,14 @@
+[package]
+name = "salty-cache"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Latest release of the original crate (the `moka2`/`hydra-moka` entries on
+# crates.io are forks). `sync` is its default thread-safe cache, which is what
+# a cache read from `spawn_blocking` threads wants.
+moka = { version = "0.12.16", features = ["sync"] }
+# Statically builds libzstd from source, like rdkafka's `zstd` feature does —
+# both resolve to one `zstd-sys`, so this adds no second copy of the library.
+zstd = "0.14"
+tokio = { workspace = true }

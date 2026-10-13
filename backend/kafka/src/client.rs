@@ -203,6 +203,20 @@ pub trait KafkaClient: Send + Sync {
     /// wrong or unwanted.
     fn release(&self, connection_id: &str);
 
+    /// Drops every cached payload, for every connection, returning how many
+    /// there were. Backs the bottom panel's "Clear memory". The default does
+    /// nothing, for a client with no cache.
+    fn clear_payload_cache(&self) -> u64 {
+        0
+    }
+
+    /// Sets the payload cache's byte cap — `0` turns it off — returning
+    /// whether that was a change. A change empties the cache. The default has
+    /// no cache to resize.
+    fn set_payload_cache_limit(&self, _max_bytes: u64) -> bool {
+        false
+    }
+
     /// Backs the tree's "Brokers" sub-list once a cluster is connected.
     /// `read_timeout` is the user's configured General settings > Brokers >
     /// Read Timeout value.
@@ -271,8 +285,7 @@ pub trait KafkaClient: Send + Sync {
     ///
     /// `max_total_payload_bytes` bounds the fetch by size rather than by
     /// message count — see `byte_budget_reached`. `None` leaves it unbounded.
-    /// It counts only payloads the fetch keeps, so a `filter` with
-    /// `include_payload` off is never bounded by it.
+    /// It counts the payload slices the fetch carries back.
     #[allow(clippy::too_many_arguments)]
     async fn fetch_messages(
         &self,
@@ -909,6 +922,10 @@ pub struct RdKafkaClient {
     /// Overrides [`LIVENESS_GRACE_MS`]; `None` in the app. Exists so a test
     /// can see a client given up on without waiting out the real grace period.
     liveness_grace: Option<Duration>,
+    /// Compressed copies of payloads larger than the grid keeps, so opening a
+    /// row is a lookup rather than a broker round trip. One for the whole app,
+    /// which is what makes it shared by every tab — see `salty_cache`.
+    payload_cache: crate::payload_cache::PayloadCache,
 }
 
 /// How long a pooled client may go unused before it is closed.
@@ -1137,6 +1154,11 @@ struct PooledAdminClient {
 impl RdKafkaClient {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The shared payload cache, for tests and diagnostics.
+    pub fn payload_cache(&self) -> &salty_cache::MessageCache {
+        &self.payload_cache.0
     }
 
     /// A client that gives up on a silent cluster after `grace` rather than
@@ -1492,8 +1514,20 @@ impl KafkaClient for RdKafkaClient {
         result
     }
 
+    fn clear_payload_cache(&self) -> u64 {
+        self.payload_cache.0.clear()
+    }
+
+    fn set_payload_cache_limit(&self, max_bytes: u64) -> bool {
+        self.payload_cache.0.set_max_bytes(max_bytes)
+    }
+
     fn release(&self, connection_id: &str) {
         self.drop_pooled_client(connection_id);
+        // Whatever the connection pointed at may not be there any more — the
+        // cache answers without asking the broker, so it must not outlive the
+        // session it was filled in.
+        self.payload_cache.0.invalidate_connection(connection_id);
     }
 
     /// Probes every bootstrap server **at once** and answers with the first
@@ -1701,6 +1735,32 @@ impl KafkaClient for RdKafkaClient {
         max_total_payload_bytes: Option<u64>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<MessageFetchResult, AppError> {
+        // Opening a row asks for one message whole. The payload cache answers
+        // that without a consumer, a handshake or a metadata call; a miss
+        // falls through to the broker and the fetch below fills the entry.
+        if let Some((partition, offset)) = crate::payload_cache::point_read_target(filter)
+            && !cancelled.load(Ordering::Relaxed)
+        {
+            let cache = self.payload_cache.0.clone();
+            let key = salty_cache::MessageKey::new(&connection.id, topic, partition, offset);
+            let cached = tokio::task::spawn_blocking(move || cache.get(&key))
+                .await
+                .ok()
+                .flatten();
+            if let Some(cached) = cached {
+                let message = crate::payload_cache::to_topic_message(partition, offset, &cached);
+                if let Some(sender) = &on_message {
+                    let _ = sender.send(message.clone());
+                }
+                return Ok(MessageFetchResult {
+                    payload_bytes_read: cached.payload.len() as u64,
+                    messages: vec![message],
+                    total_matching: 1,
+                    ..MessageFetchResult::default()
+                });
+            }
+        }
+
         let config = fetch_consumer_config(connection, max_message_size_bytes);
         // Identical to `config`; a separate handle only because the closure
         // below needs one to build each extra shard's consumer from.
@@ -1719,11 +1779,13 @@ impl KafkaClient for RdKafkaClient {
         // so the deferred teardown at the end of it cannot depend on a
         // runtime context being present on a blocking-pool thread.
         let runtime = tokio::runtime::Handle::current();
+        let payload_cache = self.payload_cache.0.clone();
+        let connection_id = connection.id.clone();
         tokio::task::spawn_blocking(move || {
             // A consumer per fetch, deliberately.
             //
             // Pooling them across fetches looks obviously right — the Data
-            // tab's per-row "Fetch payload" is a whole fetch for one message,
+            // tab's single-message payload fetch is a whole fetch for one message,
             // and building a consumer means librdkafka's threads, a socket,
             // and on a SASL/TLS cluster a full handshake. Measured against a
             // real broker over 20 single-row fetches, it was 3x *slower*:
@@ -1840,6 +1902,12 @@ impl KafkaClient for RdKafkaClient {
             )?;
             if stopped() {
                 return Ok(MessageFetchResult::default());
+            }
+            // A high watermark at or below an offset already cached means the
+            // topic was recreated or truncated since: its entries would answer
+            // for messages that no longer exist, so they go.
+            for (&partition, &(low, high)) in &watermarks_by_partition {
+                payload_cache.note_watermarks(&connection_id, &topic, partition, low, high);
             }
 
             let watermarks = |partition: i32| -> Result<(i64, i64), AppError> {
@@ -2139,8 +2207,8 @@ impl KafkaClient for RdKafkaClient {
             let mut next_shard = 0usize;
             let mut idle_elapsed = Duration::ZERO;
             let mut last_poll_error: Option<String> = None;
-            // Counted only over payloads this fetch actually keeps — see the
-            // `include_payload` guard below.
+            // Counted over the payload slices this fetch actually carries
+            // back — see `budgeted_payload_bytes`.
             let mut payload_bytes_read: u64 = 0;
             let mut stopped_at_byte_budget = false;
 
@@ -2211,11 +2279,8 @@ impl KafkaClient for RdKafkaClient {
                             continue;
                         }
                         let payload = borrowed.payload().unwrap_or(&[]);
-                        payload_bytes_read += budgeted_payload_bytes(
-                            payload.len(),
-                            filter.include_payload,
-                            filter.max_payload_preview_bytes,
-                        );
+                        payload_bytes_read +=
+                            budgeted_payload_bytes(payload.len(), filter.max_payload_preview_bytes);
                         let message = TopicMessage {
                             partition,
                             offset: borrowed.offset(),
@@ -2226,19 +2291,41 @@ impl KafkaClient for RdKafkaClient {
                             // 3 MB records costing a few MB of base64 and
                             // costing ~4 GB of it — twice over, once streamed
                             // and once in this result.
-                            payload_base64: filter.include_payload.then(|| {
-                                BASE64.encode(payload_preview_slice(
-                                    payload,
-                                    filter.max_payload_preview_bytes,
-                                ))
-                            }),
-                            // Sent whether or not the payload itself is,
-                            // so a row can report a message's real size and
-                            // the viewer can tell a cut preview from a whole
-                            // payload that happened to be short.
+                            payload_base64: Some(BASE64.encode(payload_preview_slice(
+                                payload,
+                                filter.max_payload_preview_bytes,
+                            ))),
+                            // Sent alongside the payload, so a row can report
+                            // a message's real size and the viewer can tell a
+                            // cut preview from a whole payload that happened
+                            // to be short.
                             payload_size_bytes: borrowed.payload().map(|p| p.len() as u64),
                             headers: extract_headers(&borrowed),
                         };
+                        // The whole payload, which the row above is about to
+                        // be cut down from. The closure is what copies it, and
+                        // the cache only calls it once a compression slot is
+                        // free — and not at all for a payload the grid already
+                        // holds or one cached unchanged.
+                        payload_cache.store_in_background(
+                            &runtime,
+                            salty_cache::MessageKey::new(
+                                &connection_id,
+                                &topic,
+                                partition,
+                                borrowed.offset(),
+                            ),
+                            payload.len(),
+                            message.timestamp_ms,
+                            || {
+                                crate::payload_cache::to_cached(
+                                    message.timestamp_ms,
+                                    borrowed.key(),
+                                    &message.headers,
+                                    payload,
+                                )
+                            },
+                        );
                         if let Some(sender) = &on_message {
                             let _ = sender.send(message.clone());
                         }
@@ -4205,6 +4292,157 @@ mod tests {
         let result = result.expect("a cancelled fetch is not a failure");
         assert!(result.messages.is_empty());
         assert_eq!(result.total_matching, 0);
+    }
+
+    fn point_read_filter(partition: i32, offset: i64) -> MessageFilter {
+        MessageFilter {
+            partitions: Some(vec![partition]),
+            max_messages_per_partition: Some(1),
+            max_total_messages: Some(1),
+            offset: Some(offset),
+            ..MessageFilter::default()
+        }
+    }
+
+    /// The whole point of the cache: a cached message is served with no broker
+    /// involved at all. The connection here points at a closed port, so a
+    /// fetch that tried the broker would fail.
+    #[tokio::test]
+    async fn a_cached_message_is_served_without_touching_the_broker() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let payload = vec![b'x'; 10_000];
+        client.payload_cache().store_now(
+            salty_cache::MessageKey::new(&connection.id, "orders", 2, 1042),
+            salty_cache::CachedMessage {
+                timestamp_ms: Some(5),
+                key: Some(b"k".to_vec()),
+                headers: Vec::new(),
+                payload: payload.clone(),
+            },
+        );
+
+        let result = client
+            .fetch_messages(
+                &connection,
+                "orders",
+                &point_read_filter(2, 1042),
+                None,
+                TEST_READ_TIMEOUT,
+                TEST_MAX_MESSAGE_SIZE_BYTES,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .expect("a cache hit needs no broker");
+
+        assert_eq!(result.total_matching, 1);
+        let message = &result.messages[0];
+        assert_eq!((message.partition, message.offset), (2, 1042));
+        assert_eq!(
+            message.payload_base64.as_deref(),
+            Some(BASE64.encode(&payload).as_str())
+        );
+        assert_eq!(message.payload_size_bytes, Some(10_000));
+        assert_eq!(client.payload_cache().hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_uncached_point_read_goes_to_the_broker() {
+        let client = RdKafkaClient::new();
+        let result = client
+            .fetch_messages(
+                &sample_connection(),
+                "orders",
+                &point_read_filter(0, 7),
+                None,
+                TEST_READ_TIMEOUT,
+                TEST_MAX_MESSAGE_SIZE_BYTES,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+
+        assert!(result.is_err(), "a miss must try the (unreachable) broker");
+        assert_eq!(client.payload_cache().misses(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_payload_cache_limit_can_be_changed_and_turned_off() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let key = salty_cache::MessageKey::new(&connection.id, "orders", 0, 1);
+        client.payload_cache().store_now(
+            key.clone(),
+            salty_cache::CachedMessage {
+                timestamp_ms: None,
+                key: None,
+                headers: Vec::new(),
+                payload: vec![1; 10_000],
+            },
+        );
+
+        // Restating the default changes nothing — the app does this at start.
+        assert!(!client.set_payload_cache_limit(salty_cache::DEFAULT_MAX_BYTES));
+        assert_eq!(client.payload_cache().entry_count(), 1);
+
+        assert!(client.set_payload_cache_limit(0));
+        assert!(!client.payload_cache().enabled());
+        assert_eq!(client.payload_cache().entry_count(), 0);
+
+        // Off means a point read goes straight to the (unreachable) broker.
+        let result = client
+            .fetch_messages(
+                &connection,
+                "orders",
+                &point_read_filter(0, 1),
+                None,
+                TEST_READ_TIMEOUT,
+                TEST_MAX_MESSAGE_SIZE_BYTES,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn clearing_the_payload_cache_empties_it_for_every_connection() {
+        let client = RdKafkaClient::new();
+        for connection_id in ["a", "b"] {
+            client.payload_cache().store_now(
+                salty_cache::MessageKey::new(connection_id, "orders", 0, 1),
+                salty_cache::CachedMessage {
+                    timestamp_ms: None,
+                    key: None,
+                    headers: Vec::new(),
+                    payload: vec![1; 10_000],
+                },
+            );
+        }
+
+        assert_eq!(client.clear_payload_cache(), 2);
+        assert_eq!(client.payload_cache().entry_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn releasing_a_connection_empties_its_cached_messages() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        client.payload_cache().store_now(
+            salty_cache::MessageKey::new(&connection.id, "orders", 0, 1),
+            salty_cache::CachedMessage {
+                timestamp_ms: None,
+                key: None,
+                headers: Vec::new(),
+                payload: vec![1; 10_000],
+            },
+        );
+        assert_eq!(client.payload_cache().entry_count(), 1);
+
+        client.release(&connection.id);
+
+        assert_eq!(client.payload_cache().entry_count(), 0);
     }
 
     #[tokio::test]

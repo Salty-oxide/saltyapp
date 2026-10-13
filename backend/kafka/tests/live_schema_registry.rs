@@ -89,7 +89,6 @@ fn filter() -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload: true,
         max_payload_preview_bytes: None,
     }
 }
@@ -116,7 +115,11 @@ async fn fetch_payloads(bootstrap: String) -> Vec<Vec<u8>> {
         .iter()
         .map(|m| {
             BASE64
-                .decode(m.payload_base64.as_ref().expect("include_payload was set"))
+                .decode(
+                    m.payload_base64
+                        .as_ref()
+                        .expect("a fetch always carries the payload"),
+                )
                 .expect("payload must be valid base64")
         })
         .collect()

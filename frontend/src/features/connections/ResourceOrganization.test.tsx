@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
@@ -460,5 +460,262 @@ describe("drag to folder", () => {
     fireEvent.pointerUp(screen.getByRole("button", { name: "Folder Billing" }), { clientX: 11, clientY: 11 });
 
     expect(state.assignments).toEqual([]);
+  });
+});
+
+describe("selecting several topics", () => {
+  const ctrlClick = (name: string) => fireEvent.click(screen.getByText(name), { ctrlKey: true });
+  const shiftClick = (name: string) => fireEvent.click(screen.getByText(name), { shiftKey: true });
+  const isHighlighted = (name: string) =>
+    screen.getByTestId(`resource-item-${name}`).querySelector(".resource-item--selected") !== null;
+
+  it("ctrl+click adds topics, highlights them all and empties the middle pane's selection", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "orders" });
+
+    ctrlClick("audit");
+
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+    expect(isHighlighted("orders")).toBe(true);
+    expect(isHighlighted("audit")).toBe(true);
+    expect(isHighlighted("payments")).toBe(false);
+  });
+
+  it("ctrl+click back down to one topic opens that topic again", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    ctrlClick("orders");
+
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "audit" });
+  });
+
+  it("shift+click selects the visible range", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+
+    shiftClick("audit");
+
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+    expect(["orders", "payments", "audit"].map(isHighlighted)).toEqual([true, true, true]);
+    expect(isHighlighted("billing-events")).toBe(false);
+  });
+
+  it("a plain click leaves the multi-selection and opens that topic", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    await user.click(screen.getByText("payments"));
+
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "payments" });
+    expect(isHighlighted("orders")).toBe(false);
+    expect(isHighlighted("audit")).toBe(false);
+  });
+
+  it("Escape clears the multi-selection", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(isHighlighted("orders")).toBe(false);
+    expect(isHighlighted("audit")).toBe(false);
+  });
+
+  // The set is kept apart from the workspace selection, so it has to notice
+  // when something else is selected — otherwise the topics stay highlighted
+  // beside a middle pane that is showing a different thing.
+  it("lets go of the multi-selection when anything else is selected", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+    expect(isHighlighted("orders")).toBe(true);
+
+    act(() => useWorkspaceSelectionStore.getState().selectBroker("1", 2));
+
+    expect(isHighlighted("orders")).toBe(false);
+    expect(isHighlighted("audit")).toBe(false);
+  });
+
+  it("lets go of the multi-selection when a partition is selected", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    act(() => useWorkspaceSelectionStore.getState().selectPartition("1", "payments", 0));
+
+    expect(isHighlighted("orders")).toBe(false);
+    expect(isHighlighted("audit")).toBe(false);
+  });
+
+  it("keeps the multi-selection while nothing else is selected", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+    ctrlClick("payments");
+
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+    expect(["orders", "audit", "payments"].map(isHighlighted)).toEqual([true, true, true]);
+  });
+
+  it("moves every selected topic from the right-click menu", async () => {
+    const { handlers, state } = fakeBackend({ folders: [topicFolder("f1", "Billing")] });
+    setInvokeHandlers(handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    fireEvent.contextMenu(screen.getByText("audit"));
+    await chooseFromMenu("Move to folder: Billing");
+
+    await waitFor(() =>
+      expect(state.assignments).toEqual([filedTopic("orders", "f1"), filedTopic("audit", "f1")]),
+    );
+  });
+
+  it("moves every selected topic into a new folder, creating it once", async () => {
+    const { handlers, state } = fakeBackend();
+    setInvokeHandlers(handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    fireEvent.contextMenu(screen.getByText("orders"));
+    await chooseFromMenu("Move to new folder…");
+    await user.type(screen.getByLabelText("New folder name"), "Mixed{Enter}");
+
+    await waitFor(() => expect(state.assignments).toHaveLength(2));
+    expect(state.folders).toHaveLength(1);
+    expect(state.assignments.map((a) => a.resourceName).sort()).toEqual(["audit", "orders"]);
+  });
+
+  it("moves the whole selection when one of its rows is dragged to a folder", async () => {
+    const { handlers, state } = fakeBackend({ folders: [topicFolder("f1", "Billing")] });
+    setInvokeHandlers(handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    const row = screen.getByText("audit");
+    fireEvent.pointerDown(row, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(screen.getByRole("button", { name: "Folder Billing" }), { clientX: 40, clientY: 40 });
+
+    await waitFor(() => expect(state.assignments).toHaveLength(2));
+    expect(state.assignments.map((a) => a.resourceName).sort()).toEqual(["audit", "orders"]);
+  });
+
+  it("dragging an unselected row moves only that row", async () => {
+    const { handlers, state } = fakeBackend({ folders: [topicFolder("f1", "Billing")] });
+    setInvokeHandlers(handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+    ctrlClick("audit");
+
+    const row = screen.getByText("payments");
+    fireEvent.pointerDown(row, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(screen.getByRole("button", { name: "Folder Billing" }), { clientX: 40, clientY: 40 });
+
+    await waitFor(() => expect(state.assignments).toEqual([filedTopic("payments", "f1")]));
+  });
+});
+
+describe("selecting several consumer groups", () => {
+  const folder = (id: string, name: string): ResourceFolder => ({ id, kind: "consumer", name });
+  const ctrlClick = (name: string) => fireEvent.click(screen.getByText(name), { ctrlKey: true });
+  const isHighlighted = (name: string) => screen.getByTestId(`resource-item-${name}`).classList.contains("resource-item--selected");
+
+  async function openConsumers(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByTestId("category-Consumers"));
+    await screen.findByText("checkout");
+  }
+
+  it("ctrl+click selects several groups and empties the middle pane's selection", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openConsumers(user);
+    await user.click(screen.getByText("checkout"));
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "consumerGroup", groupId: "checkout" });
+
+    ctrlClick("analytics");
+
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+    expect(isHighlighted("checkout")).toBe(true);
+    expect(isHighlighted("analytics")).toBe(true);
+  });
+
+  it("shift+click selects the range and a plain click opens one group again", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openConsumers(user);
+    await user.click(screen.getByText("checkout"));
+
+    fireEvent.click(screen.getByText("analytics"), { shiftKey: true });
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+
+    await user.click(screen.getByText("analytics"));
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "consumerGroup", groupId: "analytics" });
+    expect(isHighlighted("checkout")).toBe(false);
+  });
+
+  it("moves every selected group from the menu and by dragging", async () => {
+    const { handlers, state } = fakeBackend({ folders: [folder("g1", "Team")] });
+    setInvokeHandlers(handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openConsumers(user);
+    await user.click(screen.getByText("checkout"));
+    ctrlClick("analytics");
+
+    fireEvent.contextMenu(screen.getByText("analytics"));
+    await chooseFromMenu("Move to folder: Team");
+    await waitFor(() => expect(state.assignments).toHaveLength(2));
+
+    // Back to the root: open the folder, then drag a selected row onto the list background.
+    await user.click(await screen.findByRole("button", { name: "Folder Team" }));
+    const row = screen.getByText("analytics");
+    fireEvent.pointerDown(row, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(screen.getByLabelText("Search Consumers"), { clientX: 40, clientY: 40 });
+    await waitFor(() => expect(state.assignments).toEqual([]));
   });
 });

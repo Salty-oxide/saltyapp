@@ -4,7 +4,7 @@ import { MAX_INLINE_PAYLOAD_BYTES, PAYLOAD_RETENTION_BUDGET_BYTES, VALUE_PREVIEW
 import { formatLocalTimestamp } from "../../lib/time";
 
 describe("emptyFilterForm", () => {
-  it("pre-fills both count caps, and leaves every other field blank with includePayload checked", () => {
+  it("pre-fills both count caps, and leaves every other field blank", () => {
     const form = emptyFilterForm();
     expect(form.maxMessagesPerPartition).toBe("100");
     // Prefilled rather than blank: blank means "no overall budget", which
@@ -14,7 +14,6 @@ describe("emptyFilterForm", () => {
     expect(form.fromDate).toBe("");
     expect(form.toDate).toBe("");
     expect(form.offset).toBe("");
-    expect(form.includePayload).toBe(true);
   });
 });
 
@@ -27,7 +26,6 @@ describe("toMessageFilter", () => {
       fromTimestampMs: null,
       toTimestampMs: null,
       offset: null,
-      includePayload: true,
       maxPayloadPreviewBytes: MAX_INLINE_PAYLOAD_BYTES,
     });
   });
@@ -40,33 +38,30 @@ describe("toMessageFilter", () => {
   // Asking the backend for whole payloads shipped gigabytes of base64 across
   // the IPC boundary to render a few hundred KB of text — twice over, once
   // streamed and once in the fetch result — and the webview was killed
-  // holding it. A bound has to travel with every fetch this form produces,
-  // checkbox on or off.
+  // holding it. A bound has to travel with every fetch this form produces.
   it("always bounds the payload each row carries", () => {
     expect(toMessageFilter(emptyFilterForm()).maxPayloadPreviewBytes).not.toBeNull();
-    expect(
-      toMessageFilter({ ...emptyFilterForm(), includePayload: true }).maxPayloadPreviewBytes,
-    ).not.toBeNull();
   });
 
-  // Regression test for opening a message taking seconds. The bound above
-  // used to be VALUE_PREVIEW_BYTES — 4 KB, what a *grid cell* decodes — so
-  // every row of any ordinary JSON or Avro topic arrived truncated, and
-  // opening one had to go back to the broker for the real bytes: a fresh
-  // consumer, a TLS and SASL handshake, metadata and watermarks, on every
-  // click. A default fetch is 100 rows, which fits far more than that per
-  // row inside the retention budget.
-  it("gives each row enough payload for the viewer to open it without a second fetch", () => {
+  // Opening a row used to depend on the grid carrying up to 256 KB of every
+  // payload, so the viewer rarely had to ask the broker. The backend's payload
+  // cache (`salty_cache`) now holds every payload over a grid cell's worth,
+  // compressed, so the webview carries only that — a few KB per row.
+  it("carries only what a grid cell decodes, leaving larger payloads to the backend's cache", () => {
     expect(toMessageFilter(emptyFilterForm()).maxPayloadPreviewBytes).toBe(MAX_INLINE_PAYLOAD_BYTES);
+    expect(MAX_INLINE_PAYLOAD_BYTES).toBe(VALUE_PREVIEW_BYTES);
   });
 
-  // The budget is what keeps the line above from being the memory bug again:
-  // the more rows a fetch asks for, the less of each payload it carries.
-  it("shrinks the per-row bound as the row budget grows, so the total stays inside the retention budget", () => {
-    const rows = 512;
-    const filter = toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: String(rows) });
-    expect(filter.maxPayloadPreviewBytes).toBe(PAYLOAD_RETENTION_BUDGET_BYTES / rows);
-    expect(filter.maxPayloadPreviewBytes! * rows).toBeLessThanOrEqual(PAYLOAD_RETENTION_BUDGET_BYTES);
+  // With the bound at the floor there is nothing for the retention budget to
+  // shrink: more rows never means a smaller bound, and the total a fetch can
+  // hold only passes the budget past 16,000 rows.
+  it("holds the same per-row bound however many rows are asked for", () => {
+    for (const rows of ["1", "512", "10000"]) {
+      expect(
+        toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: rows }).maxPayloadPreviewBytes,
+      ).toBe(VALUE_PREVIEW_BYTES);
+    }
+    expect(PAYLOAD_RETENTION_BUDGET_BYTES / VALUE_PREVIEW_BYTES).toBe(16_384);
   });
 
   // The floor, and the reason this can never retain more than the code it
@@ -85,24 +80,6 @@ describe("toMessageFilter", () => {
     expect(
       toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: "" }).maxPayloadPreviewBytes,
     ).toBe(VALUE_PREVIEW_BYTES);
-  });
-
-  // An explicit partition list does make it knowable, without an overall budget.
-  it("derives the row count from an explicit partition list when there is no overall budget", () => {
-    const filter = toMessageFilter({
-      ...emptyFilterForm(),
-      maxTotalMessages: "",
-      maxMessagesPerPartition: "100",
-      partitions: "0, 1, 2, 3",
-    });
-    // 100 per partition x 4 partitions = 400 rows, priced out of the budget.
-    expect(filter.maxPayloadPreviewBytes).toBe(Math.floor(PAYLOAD_RETENTION_BUDGET_BYTES / 400));
-    expect(filter.maxPayloadPreviewBytes).toBeGreaterThan(VALUE_PREVIEW_BYTES);
-  });
-
-  it("carries includePayload through when checked", () => {
-    const form = { ...emptyFilterForm(), includePayload: true };
-    expect(toMessageFilter(form).includePayload).toBe(true);
   });
 
   it("parses maxMessagesPerPartition and maxTotalMessages as numbers", () => {

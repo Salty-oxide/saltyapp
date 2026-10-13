@@ -100,7 +100,6 @@ fn filter() -> MessageFilter {
         from_timestamp_ms: None,
         to_timestamp_ms: None,
         offset: None,
-        include_payload: true,
         // Asserts on the decompressed payload itself, so it needs all of it.
         max_payload_preview_bytes: None,
     }

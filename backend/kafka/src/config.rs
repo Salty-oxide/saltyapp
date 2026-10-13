@@ -337,11 +337,12 @@ pub fn fetch_consumer_config(connection: &Connection, max_message_size_bytes: u3
     // `fetch.wait.max.ms` below, so a re-check can never be what the fetch is
     // waiting on.
     //
-    // None of this was visible through "Fetch message payload": the broker
-    // sends whole records either way and they fill this queue either way —
-    // turning payloads off only skips the base64 afterwards. That is why the
-    // fetch stayed slow with payloads disabled, which is what made this
-    // look like a client-side cost rather than a stalled read.
+    // None of this was visible in what the fetch carried back: the broker
+    // sends whole records regardless and they fill this queue regardless —
+    // a smaller preview only shrinks the base64 afterwards. That is why the
+    // fetch stayed slow however little of each payload was kept, which is
+    // what made this look like a client-side cost rather than a stalled
+    // read.
     config.set("fetch.queue.backoff.ms", "10");
 
     // How long a broker may hold a fetch request open waiting for data
