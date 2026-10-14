@@ -1,11 +1,7 @@
 {
   "name": "salty",
   "private": true,
-<<<<<<< HEAD
-  "version": "1.16.2",
-=======
-  "version": "1.16.1",
->>>>>>> origin/main
+  "version": "1.16.9",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -29,12 +29,18 @@
 //!   high watermark at or below an offset already cached; and a partition's
 //!   offsets below its low watermark when a fetch sees it move past them
 //!   ([`MessageCache::note_watermarks`]).
-//! * **Cost:** compression runs off the caller's thread, at most
-//!   [`MAX_PENDING_STORES`] at a time. A store that finds them all busy is
-//!   dropped rather than queued — queueing would hold a copy of every
-//!   payload in a fast fetch, which is the memory the cap exists to bound. The
-//!   copy of the payload is only made once a slot is free, and a payload
-//!   already cached unchanged is not compressed again.
+//! * **Cost:** a store is an event on an unbounded channel, so the fetch loop
+//!   never waits for compression. One listener task drains it and runs at
+//!   most [`MAX_PENDING_STORES`] compressions at a time, on a dedicated rayon
+//!   pool of that many threads — not tokio's blocking pool, which the fetch
+//!   loop's consumers need. The queue is bounded in *bytes* ([`MAX_QUEUED_BYTES`]), not in
+//!   messages, because what it holds is uncompressed copies: a store that
+//!   would push it past the bound is dropped (and counted), so a very fast
+//!   fetch cannot grow memory without limit. Once the cache is full the queue
+//!   is discarded as the listener reaches it, and new stores are declined,
+//!   since nothing more can be kept. A payload already cached
+//!   unchanged is neither queued nor compressed again, and a queued store is
+//!   discarded if the cache was purged or resized after it was queued.
 //! * **Logging:** one summary line per burst of stores, not one per message —
 //!   a 1,000-row fetch would otherwise write 1,000 lines.
 //! * **Memory:** moka only expires entries while it is being used, so a timer
@@ -43,12 +49,12 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, Weak};
 use std::time::Duration;
 
 use moka::sync::Cache;
 use tokio::runtime::Handle;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 
 /// Payloads up to this size are not cached: the UI already holds them.
 pub const INLINE_PAYLOAD_BYTES: usize = 4 * 1024;
@@ -70,6 +76,10 @@ pub const ZSTD_DEFAULT_LEVEL: i32 = 10;
 
 /// Compressions allowed in flight at once.
 pub const MAX_PENDING_STORES: usize = 4;
+
+/// Uncompressed bytes that may wait for a compression slot. Past this a store
+/// is dropped rather than queued.
+pub const MAX_QUEUED_BYTES: u64 = 256 * 1024 * 1024;
 
 /// How long stores are gathered before one summary line is logged.
 pub const LOG_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -180,7 +190,7 @@ impl CacheEvent {
                 let skipped = if *skipped == 0 {
                     String::new()
                 } else {
-                    format!(", {skipped} not stored (compressor busy)")
+                    format!(", {skipped} not stored (cache or queue full)")
                 };
                 format!(
                     "Payload cache updated: {what} ({payload_bytes} -> {compressed_bytes} bytes \
@@ -211,7 +221,10 @@ pub struct CacheConfig {
     /// Payloads this size or smaller are not stored.
     pub min_payload_bytes: usize,
     pub zstd_level: i32,
+    /// Compressions running at once.
     pub max_pending_stores: usize,
+    /// Uncompressed bytes allowed to wait for one; see [`MAX_QUEUED_BYTES`].
+    pub max_queued_bytes: u64,
     /// How long stores are gathered before one summary line is logged.
     pub log_debounce: Duration,
     /// How often expired entries are released while the cache is idle.
@@ -226,6 +239,7 @@ impl Default for CacheConfig {
             min_payload_bytes: INLINE_PAYLOAD_BYTES,
             zstd_level: ZSTD_DEFAULT_LEVEL,
             max_pending_stores: MAX_PENDING_STORES,
+            max_queued_bytes: MAX_QUEUED_BYTES,
             log_debounce: LOG_DEBOUNCE,
             maintenance_interval: MAINTENANCE_INTERVAL,
         }
@@ -274,6 +288,14 @@ struct PendingLog {
     last_key: String,
 }
 
+/// One store waiting for a compression slot.
+struct StoreJob {
+    key: MessageKey,
+    message: CachedMessage,
+    /// `Shared::epoch` when it was queued; a purge since makes it stale.
+    epoch: u64,
+}
+
 struct Shared {
     /// Swapped when the capacity changes: moka cannot resize in place.
     cache: RwLock<Cache<MessageKey, Arc<Entry>>>,
@@ -281,7 +303,27 @@ struct Shared {
     max_bytes: AtomicU64,
     config: CacheConfig,
     ranges: Mutex<HashMap<PartitionId, CachedRange>>,
+    /// Compression slots.
     pending: Arc<Semaphore>,
+    /// The store queue, created with its listener task on first use.
+    queue: OnceLock<mpsc::UnboundedSender<StoreJob>>,
+    /// The threads compression runs on: as many as there are slots, owned
+    /// by the cache so they are not tokio's blocking threads (which the
+    /// fetch loop's consumers need) and end with it.
+    pool: OnceLock<rayon::ThreadPool>,
+    /// Uncompressed bytes queued or compressing.
+    queued_bytes: AtomicU64,
+    /// Whether the cache had no room at the last look. Read by the fetch
+    /// path in place of asking moka, which the fetch path never touches;
+    /// refreshed by whatever already runs off it (a write, a purge, the
+    /// maintenance timer).
+    full: AtomicBool,
+    /// Stores declined, folded into the next summary. Its own counter so
+    /// declining one never takes the log's lock.
+    skipped: AtomicU64,
+    /// Bumped by every purge, clear and resize; stores queued before it are
+    /// dropped so they cannot resurrect what was just forgotten.
+    epoch: AtomicU64,
     listener: Option<Listener>,
     log: Mutex<PendingLog>,
     log_scheduled: AtomicBool,
@@ -328,7 +370,8 @@ impl Shared {
     }
 
     fn flush_log(&self) {
-        let pending = std::mem::take(&mut *lock(&self.log));
+        let mut pending = std::mem::take(&mut *lock(&self.log));
+        pending.skipped = self.skipped.swap(0, Ordering::AcqRel);
         if pending.stored == 0 && pending.skipped == 0 {
             return;
         }
@@ -378,6 +421,12 @@ impl MessageCache {
                 max_bytes: AtomicU64::new(max_bytes),
                 ranges: Mutex::new(HashMap::new()),
                 pending: Arc::new(Semaphore::new(config.max_pending_stores.max(1))),
+                queue: OnceLock::new(),
+                pool: OnceLock::new(),
+                queued_bytes: AtomicU64::new(0),
+                full: AtomicBool::new(false),
+                skipped: AtomicU64::new(0),
+                epoch: AtomicU64::new(0),
                 config,
                 listener,
                 log: Mutex::new(PendingLog::default()),
@@ -427,6 +476,8 @@ impl MessageCache {
             dropped
         };
         lock(&self.shared.ranges).clear();
+        self.shared.epoch.fetch_add(1, Ordering::AcqRel);
+        self.refresh_full();
         self.shared.emit(CacheEvent::Resized { max_bytes, dropped });
         true
     }
@@ -494,14 +545,18 @@ impl MessageCache {
         found
     }
 
-    /// Stores a message — compressing on a blocking thread of `runtime` — and
-    /// returns at once.
+    /// Queues a message for compression and returns at once.
     ///
-    /// `make` builds the entry and is called **only if** the store will go
-    /// ahead: the payload is not copied for a store that is declined. It is
+    /// The store is an event sent to the listener task, which compresses it
+    /// on the compression pool as soon as a slot is free, so a
+    /// caller that outruns the compressors waits for nothing.
+    ///
+    /// `make` builds the entry and is called **only if** the store will be
+    /// queued: the payload is not copied for a store that is declined. It is
     /// declined for a payload at or under the threshold, one already cached
     /// unchanged ([`Self::is_current`]), and — counted in the next summary —
-    /// when every compression slot is busy.
+    /// when the queue already holds [`CacheConfig::max_queued_bytes`]. A
+    /// single payload larger than that bound is accepted into an empty queue.
     pub fn store_in_background(
         &self,
         runtime: &Handle,
@@ -510,23 +565,132 @@ impl MessageCache {
         timestamp_ms: Option<i64>,
         make: impl FnOnce() -> CachedMessage,
     ) {
-        if !self.wants(payload_len) || self.is_current(&key, payload_len, timestamp_ms) {
+        // Nothing here touches moka: a lookup or a size read can run its
+        // housekeeping on the calling thread, and the caller is the fetch
+        // loop. "Already cached unchanged" is answered by the listener.
+        let _ = timestamp_ms; // kept in the signature for callers; the listener compares it
+        if !self.wants(payload_len) {
             return;
         }
         self.start_maintenance(runtime);
-        let Ok(permit) = self.shared.pending.clone().try_acquire_owned() else {
-            lock(&self.shared.log).skipped += 1;
+        // A full cache would only evict or refuse what is stored next, so
+        // compressing it is wasted work: decline *new* stores, and leave the
+        // ones already queued to finish.
+        if self.shared.full.load(Ordering::Acquire) {
+            self.shared.skipped.fetch_add(1, Ordering::Relaxed);
             self.schedule_log(runtime);
             return;
-        };
+        }
+        let queue = self.queue(runtime);
+        let len = payload_len as u64;
+        let before = self.shared.queued_bytes.fetch_add(len, Ordering::AcqRel);
+        if before > 0 && before + len > self.shared.config.max_queued_bytes {
+            self.shared.queued_bytes.fetch_sub(len, Ordering::AcqRel);
+            self.shared.skipped.fetch_add(1, Ordering::Relaxed);
+            self.schedule_log(runtime);
+            return;
+        }
         let message = make();
-        let this = self.clone();
-        let handle = runtime.clone();
-        runtime.spawn_blocking(move || {
-            this.write(key, message);
-            drop(permit);
-            this.schedule_log(&handle);
-        });
+        let job = StoreJob {
+            key,
+            message,
+            epoch: self.shared.epoch.load(Ordering::Acquire),
+        };
+        if queue.send(job).is_err() {
+            self.shared.queued_bytes.fetch_sub(len, Ordering::AcqRel);
+        }
+    }
+
+    /// The store queue's sender, starting its listener task on first use.
+    ///
+    /// The task owns the receiver and only a `Weak` of the cache's state, so
+    /// dropping the last [`MessageCache`] closes the channel and ends it.
+    fn queue(&self, runtime: &Handle) -> &mpsc::UnboundedSender<StoreJob> {
+        self.shared.queue.get_or_init(|| {
+            let (tx, mut rx) = mpsc::unbounded_channel::<StoreJob>();
+            let weak: Weak<Shared> = Arc::downgrade(&self.shared);
+            let handle = runtime.clone();
+            runtime.spawn(async move {
+                while let Some(job) = rx.recv().await {
+                    let Some(shared) = weak.upgrade() else { break };
+                    let this = MessageCache { shared };
+                    let len = job.message.payload.len() as u64;
+                    // Once the cache is full nothing queued can be kept, so
+                    // the queue is discarded as it is reached, not compressed.
+                    // An atomic read: this task is on the async runtime and
+                    // must not do moka's housekeeping.
+                    if this.shared.full.load(Ordering::Acquire) {
+                        this.shared.queued_bytes.fetch_sub(len, Ordering::AcqRel);
+                        this.shared.skipped.fetch_add(1, Ordering::Relaxed);
+                        this.schedule_log(&handle);
+                        continue;
+                    }
+                    // Waiting here is what turns the slot count into
+                    // back-pressure on the queue rather than on the caller.
+                    let Ok(permit) = this.shared.pending.clone().acquire_owned().await else {
+                        break;
+                    };
+                    let handle = handle.clone();
+                    let task = this.clone();
+                    this.compression_pool().spawn(move || {
+                        let this = task;
+                        let stale = job.epoch != this.shared.epoch.load(Ordering::Acquire);
+                        // The wait for a slot may have been long enough for
+                        // the cache to fill.
+                        let full = this.shared.full.load(Ordering::Acquire);
+                        if full {
+                            this.shared.skipped.fetch_add(1, Ordering::Relaxed);
+                        } else if !stale
+                            && !this.is_current(
+                                &job.key,
+                                job.message.payload.len(),
+                                job.message.timestamp_ms,
+                            )
+                        {
+                            this.write_at(job.key, job.message, Some(job.epoch));
+                        }
+                        this.shared.queued_bytes.fetch_sub(len, Ordering::AcqRel);
+                        drop(permit);
+                        this.schedule_log(&handle);
+                    });
+                }
+            });
+            tx
+        })
+    }
+
+    /// The compression threads, started with the first store.
+    fn compression_pool(&self) -> &rayon::ThreadPool {
+        self.shared.pool.get_or_init(|| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(self.shared.config.max_pending_stores.max(1))
+                .thread_name(|index| format!("salty-cache-compress-{index}"))
+                .build()
+                .expect("the compression thread pool starts")
+        })
+    }
+
+    /// Whether the cache has no room left for even the smallest payload it
+    /// stores. moka evicts to stay *under* its cap, so "full" cannot mean
+    /// "at the cap"; the smallest cacheable payload's uncompressed size is a
+    /// deliberately generous stand-in for what the next entry will weigh.
+    pub fn is_full(&self) -> bool {
+        let max = self.shared.max_bytes.load(Ordering::Relaxed);
+        let used = self.shared.cache().weighted_size();
+        used.saturating_add(self.shared.config.min_payload_bytes as u64) > max
+    }
+
+    /// Re-reads fullness after letting moka apply its pending writes, which
+    /// is what makes recent inserts count, and publishes it for the fetch
+    /// path. Only for threads that are already off the fetch path.
+    fn refresh_full(&self) {
+        self.shared.cache().run_pending_tasks();
+        self.shared.full.store(self.is_full(), Ordering::Release);
+    }
+
+    /// Uncompressed bytes waiting for, or in, a compression slot.
+    pub fn queued_bytes(&self) -> u64 {
+        self.shared.queued_bytes.load(Ordering::Acquire)
     }
 
     /// Compresses and stores on the calling thread, then logs at once.
@@ -541,10 +705,22 @@ impl MessageCache {
     }
 
     fn write(&self, key: MessageKey, message: CachedMessage) {
+        self.write_at(key, message, None);
+    }
+
+    /// Compresses and inserts. With an `epoch`, the entry is discarded if a
+    /// purge or resize happened since — checked after compressing too, since
+    /// that is the slow part and a purge can land during it. (A purge in the
+    /// instants between that check and the insert still loses the race; the
+    /// consequence is one stale entry, which idle expiry removes.)
+    fn write_at(&self, key: MessageKey, message: CachedMessage, epoch: Option<u64>) {
         let Ok(compressed) = zstd::bulk::compress(&message.payload, self.shared.config.zstd_level)
         else {
             return;
         };
+        if epoch.is_some_and(|e| e != self.shared.epoch.load(Ordering::Acquire)) {
+            return;
+        }
         let entry = Entry {
             payload_len: message.payload.len(),
             compressed: compressed.into_boxed_slice(),
@@ -572,6 +748,7 @@ impl MessageCache {
         }
         self.shared.compressions.fetch_add(1, Ordering::Relaxed);
         self.shared.cache().insert(key, Arc::new(entry));
+        self.refresh_full();
     }
 
     /// One summary line per burst: the first store of a burst schedules it,
@@ -600,19 +777,25 @@ impl MessageCache {
             loop {
                 tokio::time::sleep(interval).await;
                 let Some(shared) = weak.upgrade() else { break };
-                shared.cache().run_pending_tasks();
+                // Blocking-pool work, not the async runtime's: this is moka's
+                // housekeeping, which scales with what expired.
+                let _ = tokio::task::spawn_blocking(move || {
+                    MessageCache { shared }.refresh_full();
+                })
+                .await;
             }
         });
     }
 
     fn purge(&self, what: String, predicate: impl Fn(&MessageKey) -> bool + Send + Sync + 'static) {
+        self.shared.epoch.fetch_add(1, Ordering::AcqRel);
         // Only fails if invalidation closures were not enabled, which `build`
         // always does.
         let _ = self
             .shared
             .cache()
             .invalidate_entries_if(move |key, _| predicate(key));
-        self.shared.cache().run_pending_tasks();
+        self.refresh_full();
         self.shared.emit(CacheEvent::Purged {
             what,
             entries: self.shared.cache().entry_count(),
@@ -625,11 +808,12 @@ impl MessageCache {
     /// Counters and hit/miss totals are kept: they describe the session, not
     /// what is currently held.
     pub fn clear(&self) -> u64 {
+        self.shared.epoch.fetch_add(1, Ordering::AcqRel);
         self.shared.cache().run_pending_tasks();
         let cleared = self.shared.cache().entry_count();
         lock(&self.shared.ranges).clear();
         self.shared.cache().invalidate_all();
-        self.shared.cache().run_pending_tasks();
+        self.refresh_full();
         self.shared.emit(CacheEvent::Purged {
             what: format!("all {cleared} cached payloads"),
             entries: self.shared.cache().entry_count(),
@@ -915,31 +1099,168 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_full_cache_declines_new_stores_without_copying_them() {
+        let cache = MessageCache::new(CacheConfig {
+            // Two ~10 KB entries fit; a third (and the headroom) does not.
+            max_bytes: 22_000,
+            ..CacheConfig::default()
+        });
+        for offset in 0..10 {
+            // xorshift: unlike `noise`, it does not compress, so each entry
+            // really weighs ~10 KB.
+            let mut x = 0x9E37_79B9_u32.wrapping_add(offset as u32) | 1;
+            let mut m = message(10_000);
+            m.payload = (0..10_000)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    x as u8
+                })
+                .collect();
+            cache.store_now(key(offset), m);
+        }
+        cache.shared.cache().run_pending_tasks();
+        assert!(cache.is_full());
+
+        let copied = Arc::new(AtomicUsize::new(0));
+        let counter = copied.clone();
+        let m = message(10_000);
+        cache.store_in_background(
+            &Handle::current(),
+            key(99),
+            m.payload.len(),
+            None,
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                m
+            },
+        );
+        assert_eq!(copied.load(Ordering::SeqCst), 0);
+        assert_eq!(cache.queued_bytes(), 0);
+    }
+
+    #[test]
+    fn compression_does_not_need_a_tokio_blocking_thread() {
+        // One blocking thread, and it is occupied for the whole test: a
+        // cache that compressed through `spawn_blocking` could not finish.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (release, hold) = std::sync::mpsc::channel::<()>();
+            let _occupied = tokio::task::spawn_blocking(move || {
+                let _ = hold.recv();
+            });
+            let cache = MessageCache::default();
+            let handle = Handle::current();
+            let m = message(50_000);
+            cache.store_in_background(&handle, key(1), m.payload.len(), None, || m);
+            for _ in 0..200 {
+                if cache.compressions() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let compressed = cache.compressions();
+            let _ = release.send(());
+            assert_eq!(
+                compressed, 1,
+                "the store finished with no blocking thread free"
+            );
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn queueing_does_not_wait_for_compression() {
+        let cache = MessageCache::new(CacheConfig {
+            max_pending_stores: 1,
+            // ~1 MB/s: compressing even one of these takes seconds.
+            zstd_level: ZSTD_MAX_LEVEL,
+            ..CacheConfig::default()
+        });
+        let handle = Handle::current();
+        let payloads: Vec<Vec<u8>> = (0..6).map(|i| noise(4_000_000, i)).collect();
+        let started = std::time::Instant::now();
+        for (offset, payload) in payloads.into_iter().enumerate() {
+            cache.store_in_background(
+                &handle,
+                key(offset as i64),
+                payload.len(),
+                None,
+                move || CachedMessage {
+                    timestamp_ms: None,
+                    key: None,
+                    headers: Vec::new(),
+                    payload,
+                },
+            );
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "queueing 6 slow stores took {:?}",
+            started.elapsed()
+        );
+        assert!(cache.queued_bytes() > 0);
+        assert_eq!(cache.compressions(), 0, "nothing had to finish first");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_queue_is_discarded_once_the_cache_is_full() {
+        let cache = MessageCache::new(CacheConfig {
+            max_pending_stores: 1,
+            // Room for one ~100 KB entry and not the headroom for another.
+            max_bytes: 102_000,
+            ..CacheConfig::default()
+        });
+        let handle = Handle::current();
+        for offset in 0..8 {
+            let mut x = 0x9E37_79B9_u32.wrapping_add(offset as u32) | 1;
+            let mut m = message(100_000);
+            m.payload = (0..100_000)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    x as u8
+                })
+                .collect();
+            cache.store_in_background(&handle, key(offset), m.payload.len(), None, || m);
+        }
+        for _ in 0..200 {
+            if cache.queued_bytes() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(cache.queued_bytes(), 0, "the queue drained");
+        assert!(cache.compressions() >= 1);
+        assert!(
+            cache.compressions() < 8,
+            "once full, queued stores are dropped, not compressed ({})",
+            cache.compressions()
+        );
+    }
+
     #[test]
     fn an_unused_entry_expires_but_a_used_one_stays() {
-<<<<<<< HEAD
         // Wide margins: touches are 150 ms apart against a 1 s idle time, so a
         // runner that stalls for most of a second still does not expire the
         // entry that is being used.
         let cache = MessageCache::new(CacheConfig {
             time_to_idle: Duration::from_millis(1_000),
-=======
-        let cache = MessageCache::new(CacheConfig {
-            time_to_idle: Duration::from_millis(400),
->>>>>>> origin/main
             ..CacheConfig::default()
         });
         cache.store_now(key(1), message(10_000));
         cache.store_now(key(2), message(10_000));
 
         // Keep touching key 1 for longer than the idle time.
-<<<<<<< HEAD
         for _ in 0..9 {
             std::thread::sleep(Duration::from_millis(150));
-=======
-        for _ in 0..6 {
-            std::thread::sleep(Duration::from_millis(120));
->>>>>>> origin/main
             assert!(cache.get(&key(1)).is_some());
         }
 
@@ -1199,25 +1520,9 @@ mod tests {
             "a small payload must not be copied"
         );
 
-        // Already cached, unchanged.
-        let m = message(10_000);
-        cache.store_now(key(2), m.clone());
-        let counter = built.clone();
-        cache.store_in_background(
-            &handle,
-            key(2),
-            m.payload.len(),
-            m.timestamp_ms,
-            move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-                m
-            },
-        );
-        assert_eq!(
-            built.load(Ordering::SeqCst),
-            0,
-            "an unchanged payload must not be copied"
-        );
+        // An unchanged payload *is* copied here — recognising it needs a
+        // moka lookup, which the fetch path no longer makes — but the
+        // listener still does not compress it again (next test).
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1258,11 +1563,36 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn stores_beyond_the_pending_limit_are_dropped_and_not_copied() {
+    async fn stores_wait_for_a_slot_instead_of_being_dropped() {
+        let cache = MessageCache::new(CacheConfig {
+            max_pending_stores: 1,
+            ..CacheConfig::default()
+        });
+        let handle = Handle::current();
+        for offset in 0..8 {
+            let m = message(50_000);
+            cache.store_in_background(&handle, key(offset), m.payload.len(), m.timestamp_ms, || m);
+        }
+        for _ in 0..200 {
+            if cache.compressions() == 8 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(cache.compressions(), 8, "every queued store is compressed");
+        assert_eq!(cache.queued_bytes(), 0);
+        for offset in 0..8 {
+            assert!(cache.get(&key(offset)).is_some());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stores_beyond_the_queue_byte_bound_are_dropped_and_not_copied() {
         let (cache, events) = recording(CacheConfig {
             max_pending_stores: 1,
-            // Slow on purpose, so the permit is still held when the next
-            // store arrives.
+            // Room for one 8 MB payload, which is slow to compress on
+            // purpose so it is still queued when the next arrive.
+            max_queued_bytes: 10_000_000,
             zstd_level: ZSTD_MAX_LEVEL,
             log_debounce: Duration::from_millis(50),
             ..CacheConfig::default()
@@ -1285,14 +1615,14 @@ mod tests {
         assert_eq!(
             built.load(Ordering::SeqCst),
             1,
-            "only the store that got a slot copies"
+            "only the store that fits the queue copies"
         );
 
         // The summary says some were dropped.
         for _ in 0..200 {
             if lines(&events)
                 .iter()
-                .any(|l| l.contains("not stored (compressor busy)"))
+                .any(|l| l.contains("not stored (cache or queue full)"))
             {
                 return;
             }
@@ -1302,6 +1632,38 @@ mod tests {
             "no summary reported the dropped stores: {:?}",
             lines(&events)
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_store_queued_before_a_purge_does_not_land_after_it() {
+        let cache = MessageCache::new(CacheConfig {
+            max_pending_stores: 1,
+            zstd_level: ZSTD_MAX_LEVEL,
+            ..CacheConfig::default()
+        });
+        let handle = Handle::current();
+        // The first occupies the only slot; the second waits behind it.
+        for offset in 0..2 {
+            let payload = noise(4_000_000, offset as u32);
+            cache.store_in_background(&handle, key(offset), payload.len(), None, move || {
+                CachedMessage {
+                    timestamp_ms: None,
+                    key: None,
+                    headers: Vec::new(),
+                    payload,
+                }
+            });
+        }
+        cache.clear();
+        for _ in 0..400 {
+            if cache.queued_bytes() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(cache.queued_bytes(), 0);
+        assert!(cache.get(&key(0)).is_none());
+        assert!(cache.get(&key(1)).is_none());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1315,19 +1677,13 @@ mod tests {
             let m = message(10_000);
             cache.store_in_background(&handle, key(offset), m.payload.len(), m.timestamp_ms, || m);
         }
-<<<<<<< HEAD
         // Let the compressions finish and the debounced line(s) follow.
         tokio::time::sleep(Duration::from_millis(2_000)).await;
-=======
-        // The compressions finish within the debounce window; the line follows.
-        tokio::time::sleep(Duration::from_millis(1_200)).await;
->>>>>>> origin/main
 
         let updates: Vec<String> = lines(&events)
             .into_iter()
             .filter(|l| l.starts_with("Payload cache updated"))
             .collect();
-<<<<<<< HEAD
         // One line for the burst. A runner starved enough to spread twenty
         // compressions over several windows may log a couple more; what must
         // never happen is a line per message.
@@ -1341,13 +1697,6 @@ mod tests {
         // what happened to all twenty.
         assert!(updates.iter().all(|l| l.contains("stored")), "{updates:?}");
         assert!(updates.iter().all(|l| l.contains("objects")), "{updates:?}");
-=======
-        assert_eq!(updates.len(), 1, "{updates:?}");
-        // Slots are limited, so some may have been dropped; the line counts
-        // what happened to all twenty.
-        assert!(updates[0].contains("stored"), "{updates:?}");
-        assert!(updates[0].contains("objects"), "{updates:?}");
->>>>>>> origin/main
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1374,7 +1723,6 @@ mod tests {
         assert_eq!(cache.compressions(), 1);
 
         // Nobody touches the cache; the timer alone has to free the entry.
-<<<<<<< HEAD
         // (`weighted_size` is read without running maintenance itself.) Polled
         // rather than slept for, so a slow runner only makes it wait longer.
         let mut freed = false;
@@ -1389,10 +1737,5 @@ mod tests {
             freed,
             "the maintenance timer never released the expired entry"
         );
-=======
-        // (`weighted_size` is read without running maintenance itself.)
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        assert_eq!(cache.shared.cache().weighted_size(), 0);
->>>>>>> origin/main
     }
 }

@@ -30,7 +30,7 @@ export function CloseConfirmation() {
   return (
     <div className="connection-modal-overlay" onClick={() => setAsking(false)}>
       <div
-        className="connection-modal"
+        className="connection-modal connection-modal--confirm"
         role="dialog"
         aria-modal="true"
         aria-label="Close application"

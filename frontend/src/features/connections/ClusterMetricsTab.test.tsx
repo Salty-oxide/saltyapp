@@ -253,13 +253,9 @@ describe("ClusterMetricsTab", () => {
       manyTopics(400);
       render(<ClusterMetricsTab connectionId="1" />);
 
-<<<<<<< HEAD
       // 400 topics are 800 mocked broker calls; a coverage-instrumented run on
       // a small runner needs longer than the 1 s default.
       const table = await screen.findByRole("table", { name: "Topic health overview" }, { timeout: 10_000 });
-=======
-      const table = await screen.findByRole("table", { name: "Topic health overview" });
->>>>>>> origin/main
       const rendered = within(table).getAllByRole("row").length;
       expect(rendered).toBeLessThan(60);
       expect(within(table).getByText("topic-0000")).toBeInTheDocument();
@@ -270,11 +266,7 @@ describe("ClusterMetricsTab", () => {
       manyTopics(400);
       render(<ClusterMetricsTab connectionId="1" />);
 
-<<<<<<< HEAD
       expect(await screen.findByLabelText("Total topics", {}, { timeout: 10_000 })).toHaveTextContent("400");
-=======
-      expect(await screen.findByLabelText("Total topics")).toHaveTextContent("400");
->>>>>>> origin/main
     });
   });
 
