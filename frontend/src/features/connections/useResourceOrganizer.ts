@@ -42,6 +42,11 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     () => new Set(folders.filter((folder) => expanded[`${categoryKey}:folder:${folder.id}`]).map((f) => f.id)),
     [folders, expanded, categoryKey],
   );
+  // Folders closed by hand while a search is active. A ref plus a tick: it is
+  // cleared as soon as a render sees no search, so it never outlives one.
+  const searchClosedRef = useRef(new Set<string>());
+  const searchingRef = useRef(false);
+  const [, setSearchTick] = useState(0);
   const pinned = useMemo(
     () => (kind === "topic" ? new Set(organization.pinnedTopics) : new Set<string>()),
     [organization.pinnedTopics, kind],
@@ -64,7 +69,9 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
       query,
       matches,
     });
-    return flattenRows(organized, openFolderIds);
+    searchingRef.current = organized.searching;
+    if (!organized.searching) searchClosedRef.current.clear();
+    return flattenRows(organized, openFolderIds, searchClosedRef.current);
   }
 
   /** Moves each name in turn (one write at a time, so a failure stops where it happened). `null` is the root. */
@@ -235,7 +242,18 @@ export function useResourceOrganizer({ connectionId, kind, categoryKey }: UseRes
     folders,
     pinned,
     isFolderOpen: (id: string) => openFolderIds.has(id),
-    toggleFolder: (id: string) => toggleExpanded(folderKey(id)),
+    toggleFolder: (id: string, open?: boolean) => {
+      if (searchingRef.current) {
+        // During a search a folder's openness is derived, so a click only
+        // changes this search's view; the stored open state is left alone.
+        const closed = searchClosedRef.current;
+        if (open === false) closed.delete(id);
+        else closed.add(id);
+        setSearchTick((n) => n + 1);
+        return;
+      }
+      toggleExpanded(folderKey(id));
+    },
     rowsFor,
     edit,
     editError,

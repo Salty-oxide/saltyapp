@@ -54,11 +54,11 @@ export function FolderHeaderRow({ folder, count, open, organizer, style }: Folde
         tabIndex={0}
         aria-expanded={open}
         aria-label={`Folder ${folder.name}`}
-        onClick={() => organizer.toggleFolder(folder.id)}
+        onClick={() => organizer.toggleFolder(folder.id, open)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            organizer.toggleFolder(folder.id);
+            organizer.toggleFolder(folder.id, open);
           }
         }}
         onContextMenu={(e) => {

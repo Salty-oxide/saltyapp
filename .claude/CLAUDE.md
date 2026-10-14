@@ -218,9 +218,15 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
 - **Payloads over 4 KB are served from `salty-cache`, not carried by the grid.**
   `backend/cache` is its own crate (moka 0.12 + zstd, knows nothing of Kafka);
   `RdKafkaClient` holds the one shared instance. The fetch loop copies each
-  payload over 4 KB into it *in the background* — at most 4 compressions in
-  flight, a store is **dropped** rather than queued when they are busy, because
-  queueing would hold a copy of every payload in a fast fetch. Opening a row
+  payload over 4 KB into it *in the background* — every store is an event on an
+  unbounded channel drained by one listener task, which runs at most 4
+  compressions at once on its own `rayon` pool (not tokio's blocking pool, which
+  the fetch consumers need). The queue is bounded in *bytes* (256 MB of uncompressed
+  copies, `MAX_QUEUED_BYTES`): a store past that is **dropped**, because an
+  unbounded queue would hold a copy of every payload in a very fast fetch. A
+  queued store is also discarded if a purge/resize happened after it was queued;
+  and once the cache is *full* new stores are declined up front and the queue
+  is discarded as the listener reaches it. Opening a row
   sends the same `connection_fetch_messages` as before (one partition, an
   offset, total 1, no preview cap); `fetch_messages` recognises that
   (`point_read_target`) and answers from the cache with no consumer and no

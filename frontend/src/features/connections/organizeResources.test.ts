@@ -152,6 +152,13 @@ describe("flattenRows", () => {
     expect(rows.some((r) => r.type === "item" && r.item === "orders")).toBe(true);
   });
 
+  it("keeps a folder shut that the reader closed during the search", () => {
+    const organized = run({ folders, assignments, query: "orders", matches: contains("orders") });
+    const rows = flattenRows(organized, new Set(), new Set(["f1"]));
+    expect(rows.find((r) => r.type === "folder" && r.folder.id === "f1")).toMatchObject({ open: false });
+    expect(rows.some((r) => r.type === "item" && r.item === "orders")).toBe(false);
+  });
+
   it("reports each folder's item count and open state", () => {
     const organized = run({ folders, assignments });
     const header = flattenRows(organized, new Set(["f1"])).find((r) => r.type === "folder" && r.folder.id === "f1");

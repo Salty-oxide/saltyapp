@@ -12,3 +12,7 @@ moka = { version = "0.12.16", features = ["sync"] }
 # both resolve to one `zstd-sys`, so this adds no second copy of the library.
 zstd = "0.14"
 tokio = { workspace = true }
+# A dedicated pool for compression, so it never competes with the fetch loop's
+# `spawn_blocking` consumers for tokio's blocking threads. Already in the tree
+# through moka's dependencies.
+rayon = "1.10"

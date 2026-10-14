@@ -94,17 +94,25 @@ export type TreeRow<T> =
  * Flattens `organize`'s result into one row list, which is what both the
  * plain list and `react-window` render. A folder is open when the user opened
  * it, or — while searching — whenever it has anything to show, so hits are
- * never hidden behind a collapsed folder. That search-time opening is not
+ * never hidden behind a collapsed folder — unless the reader closed that folder
+ * themselves during the search. That search-time opening is not
  * stored: clearing the search restores the folders to how they were left.
  */
-export function flattenRows<T>(organized: Organized<T>, openFolderIds: ReadonlySet<string>): TreeRow<T>[] {
+export function flattenRows<T>(
+  organized: Organized<T>,
+  openFolderIds: ReadonlySet<string>,
+  /** Folders the reader closed during this search; they stay shut until the search ends. */
+  closedWhileSearching: ReadonlySet<string> = new Set(),
+): TreeRow<T>[] {
   const rows: TreeRow<T>[] = [];
   if (organized.pinned.length > 0) {
     rows.push({ type: "pinned-label" });
     for (const item of organized.pinned) rows.push({ type: "item", item, section: "pinned" });
   }
   for (const group of organized.folders) {
-    const open = organized.searching ? group.items.length > 0 || openFolderIds.has(group.folder.id) : openFolderIds.has(group.folder.id);
+    const open = organized.searching
+      ? !closedWhileSearching.has(group.folder.id) && (group.items.length > 0 || openFolderIds.has(group.folder.id))
+      : openFolderIds.has(group.folder.id);
     rows.push({ type: "folder", folder: group.folder, count: group.items.length, open });
     if (open) {
       for (const item of group.items) {
