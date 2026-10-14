@@ -14,11 +14,14 @@
 //! # Policy
 //!
 //! * **Size:** weighted by compressed bytes, capped at
-//!   [`DEFAULT_MAX_BYTES`] (1 GiB). Past the cap moka's own policy decides —
-//!   TinyLFU admission with LRU eviction — so a new entry may be refused
-//!   rather than displace something more valuable, and the app then behaves
-//!   as it did without a cache.
-//! * **Expiry:** time-to-*idle*, [`DEFAULT_TIME_TO_IDLE`] (15 minutes). Every
+//!   [`DEFAULT_MAX_BYTES`] (1 GiB). New entries always win: when a store
+//!   takes the cache past the cap, the entries with the largest
+//!   *idle time x size* are evicted — the oldest untouched and the biggest
+//!   first — down to 90% of the cap, so room is made in one pass rather
+//!   than on every store. moka is given headroom above the cap so its own
+//!   admission policy never refuses a new entry; the cap is enforced here.
+//!   Only a single payload larger than the whole cap is declined.
+//! * **Expiry:** time-to-*idle*, [`DEFAULT_TIME_TO_IDLE`] (60 minutes). Every
 //!   read resets it, so a payload in use stays; one nobody opens goes.
 //! * **Freshness:** a store always reflects the most recent fetch of that
 //!   offset.
@@ -36,9 +39,7 @@
 //!   loop's consumers need. The queue is bounded in *bytes* ([`MAX_QUEUED_BYTES`]), not in
 //!   messages, because what it holds is uncompressed copies: a store that
 //!   would push it past the bound is dropped (and counted), so a very fast
-//!   fetch cannot grow memory without limit. Once the cache is full the queue
-//!   is discarded as the listener reaches it, and new stores are declined,
-//!   since nothing more can be kept. A payload already cached
+//!   fetch cannot grow memory without limit. A payload already cached
 //!   unchanged is neither queued nor compressed again, and a queued store is
 //!   discarded if the cache was purged or resized after it was queued.
 //! * **Logging:** one summary line per burst of stores, not one per message —
@@ -63,7 +64,7 @@ pub const INLINE_PAYLOAD_BYTES: usize = 4 * 1024;
 pub const DEFAULT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// How long an entry may go unused before it expires.
-pub const DEFAULT_TIME_TO_IDLE: Duration = Duration::from_secs(15 * 60);
+pub const DEFAULT_TIME_TO_IDLE: Duration = Duration::from_secs(60 * 60);
 
 /// zstd's highest level. Measured at ~1.3 MB/s and no smaller than level 19 on
 /// JSON, so it is available but not the default.
@@ -330,6 +331,72 @@ struct StoreJob {
     epoch: u64,
 }
 
+/// What the cache knows about each entry's use, to choose what to evict.
+/// moka reports neither last use nor admits to a policy of ours, so this
+/// shadows its contents: every write records, every read touches, and moka's
+/// eviction listener forgets.
+#[derive(Default)]
+struct UsageIndex {
+    /// Weight, logical time of last use, and the entry's identity (so a late
+    /// removal notice for a replaced entry cannot forget its successor).
+    entries: HashMap<MessageKey, (u32, u64, usize)>,
+    bytes: u64,
+    clock: u64,
+}
+
+impl UsageIndex {
+    fn record(&mut self, key: MessageKey, weight: u32, id: usize) {
+        self.clock += 1;
+        if let Some((old, _, _)) = self.entries.insert(key, (weight, self.clock, id)) {
+            self.bytes -= u64::from(old);
+        }
+        self.bytes += u64::from(weight);
+    }
+
+    fn touch(&mut self, key: &MessageKey) {
+        self.clock += 1;
+        let now = self.clock;
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.1 = now;
+        }
+    }
+
+    /// Forgets `key`, but only the entry identified by `id` when given.
+    fn forget(&mut self, key: &MessageKey, id: Option<usize>) {
+        if let Some(&(weight, _, current)) = self.entries.get(key)
+            && id.is_none_or(|id| id == current)
+        {
+            self.entries.remove(key);
+            self.bytes -= u64::from(weight);
+        }
+    }
+
+    /// Removes entries until at most `target` bytes remain, never `keep`:
+    /// highest idle-time x weight first. Returns what was removed.
+    fn make_room(&mut self, keep: &MessageKey, target: u64) -> Vec<MessageKey> {
+        let now = self.clock;
+        let mut candidates: Vec<(u128, MessageKey)> = self
+            .entries
+            .iter()
+            .filter(|(key, _)| *key != keep)
+            .map(|(key, &(weight, used, _))| {
+                let idle = u128::from(now - used) + 1;
+                (idle * u128::from(weight), key.clone())
+            })
+            .collect();
+        candidates.sort_unstable_by_key(|c| std::cmp::Reverse(c.0));
+        let mut evicted = Vec::new();
+        for (_, key) in candidates {
+            if self.bytes <= target {
+                break;
+            }
+            self.forget(&key, None);
+            evicted.push(key);
+        }
+        evicted
+    }
+}
+
 struct Shared {
     /// Swapped when the capacity changes: moka cannot resize in place.
     cache: RwLock<Cache<MessageKey, Arc<Entry>>>,
@@ -349,14 +416,9 @@ struct Shared {
     queued_bytes: AtomicU64,
     /// Buffers handed back by finished compressions.
     buffers: Mutex<BufferPool>,
-    /// Whether the cache had no room at the last look. Read by the fetch
-    /// path in place of asking moka, which the fetch path never touches;
-    /// refreshed by whatever already runs off it (a write, a purge, the
-    /// maintenance timer).
-    full: AtomicBool,
-    /// Bytes written since moka's size was last settled; what its size read
-    /// lags by.
-    written_since_settle: AtomicU64,
+    /// Use of every entry; see [`UsageIndex`]. Never held across a call into
+    /// moka, whose listener takes it.
+    usage: Arc<Mutex<UsageIndex>>,
     /// Stores declined, folded into the next summary. Its own counter so
     /// declining one never takes the log's lock.
     skipped: AtomicU64,
@@ -381,12 +443,24 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn build_cache(config: &CacheConfig, max_bytes: u64) -> Cache<MessageKey, Arc<Entry>> {
+fn build_cache(
+    config: &CacheConfig,
+    max_bytes: u64,
+    usage: Arc<Mutex<UsageIndex>>,
+) -> Cache<MessageKey, Arc<Entry>> {
     Cache::builder()
-        // A cap of 0 is "off" and never reaches the weigher (nothing is
-        // stored); moka itself is given a floor so it is always valid.
-        .max_capacity(max_bytes.max(1))
+        // The cap is enforced by `write_at` through the usage index, evicting
+        // what has sat longest and weighs most. moka's own limit is only a
+        // backstop with headroom, so its admission policy never turns away a
+        // new entry. (A cap of 0 is "off" and nothing is stored; moka is
+        // given a floor so it is always valid.)
+        .max_capacity(max_bytes.saturating_mul(2).saturating_add(1 << 20))
         .weigher(|_key: &MessageKey, entry: &Arc<Entry>| entry.weight())
+        .eviction_listener(move |key: Arc<MessageKey>, entry: Arc<Entry>, cause| {
+            if cause != moka::notification::RemovalCause::Replaced {
+                lock(&usage).forget(&key, Some(Arc::as_ptr(&entry) as usize));
+            }
+        })
         // Idle, not live: a read pushes the expiry out again.
         .time_to_idle(config.time_to_idle)
         .support_invalidation_closures()
@@ -454,19 +528,19 @@ impl MessageCache {
 
     fn build(config: CacheConfig, listener: Option<Listener>) -> Self {
         let max_bytes = config.max_bytes;
+        let usage = Arc::new(Mutex::new(UsageIndex::default()));
         Self {
             shared: Arc::new(Shared {
-                cache: RwLock::new(build_cache(&config, max_bytes)),
+                cache: RwLock::new(build_cache(&config, max_bytes, usage.clone())),
+                usage,
                 max_bytes: AtomicU64::new(max_bytes),
                 ranges: Mutex::new(HashMap::new()),
                 pending: Arc::new(Semaphore::new(config.max_pending_stores.max(1))),
                 queue: OnceLock::new(),
                 pool: OnceLock::new(),
                 queued_bytes: AtomicU64::new(0),
-                full: AtomicBool::new(false),
                 skipped: AtomicU64::new(0),
                 buffers: Mutex::new(BufferPool::default()),
-                written_since_settle: AtomicU64::new(0),
                 epoch: AtomicU64::new(0),
                 config,
                 listener,
@@ -513,7 +587,8 @@ impl MessageCache {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.run_pending_tasks();
             let dropped = cache.entry_count();
-            *cache = build_cache(&self.shared.config, max_bytes);
+            *cache = build_cache(&self.shared.config, max_bytes, self.shared.usage.clone());
+            *lock(&self.shared.usage) = UsageIndex::default();
             dropped
         };
         lock(&self.shared.ranges).clear();
@@ -554,9 +629,13 @@ impl MessageCache {
         payload_len: usize,
         timestamp_ms: Option<i64>,
     ) -> bool {
-        self.shared.cache().get(key).is_some_and(|entry| {
+        let current = self.shared.cache().get(key).is_some_and(|entry| {
             entry.payload_len == payload_len && entry.timestamp_ms == timestamp_ms
-        })
+        });
+        if current {
+            lock(&self.shared.usage).touch(key);
+        }
+        current
     }
 
     /// Looks a message up, decompressing it. Resets the entry's idle timer.
@@ -588,6 +667,7 @@ impl MessageCache {
         });
         match &found {
             Some(message) => {
+                lock(&self.shared.usage).touch(key);
                 self.shared.hits.fetch_add(1, Ordering::Relaxed);
                 self.shared.emit(CacheEvent::Hit {
                     key: key.to_string(),
@@ -632,14 +712,6 @@ impl MessageCache {
             return;
         }
         self.start_maintenance(runtime);
-        // A full cache would only evict or refuse what is stored next, so
-        // compressing it is wasted work: decline *new* stores, and leave the
-        // ones already queued to finish.
-        if self.shared.full.load(Ordering::Acquire) {
-            self.shared.skipped.fetch_add(1, Ordering::Relaxed);
-            self.schedule_log(runtime);
-            return;
-        }
         let queue = self.queue(runtime);
         let len = payload_len as u64;
         let before = self.shared.queued_bytes.fetch_add(len, Ordering::AcqRel);
@@ -674,16 +746,6 @@ impl MessageCache {
                     let Some(shared) = weak.upgrade() else { break };
                     let this = MessageCache { shared };
                     let len = job.message.payload.len() as u64;
-                    // Once the cache is full nothing queued can be kept, so
-                    // the queue is discarded as it is reached, not compressed.
-                    // An atomic read: this task is on the async runtime and
-                    // must not do moka's housekeeping.
-                    if this.shared.full.load(Ordering::Acquire) {
-                        this.shared.queued_bytes.fetch_sub(len, Ordering::AcqRel);
-                        this.shared.skipped.fetch_add(1, Ordering::Relaxed);
-                        this.schedule_log(&handle);
-                        continue;
-                    }
                     // Waiting here is what turns the slot count into
                     // back-pressure on the queue rather than on the caller.
                     let Ok(permit) = this.shared.pending.clone().acquire_owned().await else {
@@ -694,12 +756,7 @@ impl MessageCache {
                     this.compression_pool().spawn(move || {
                         let this = task;
                         let stale = job.epoch != this.shared.epoch.load(Ordering::Acquire);
-                        // The wait for a slot may have been long enough for
-                        // the cache to fill.
-                        let full = this.shared.full.load(Ordering::Acquire);
-                        if full {
-                            this.shared.skipped.fetch_add(1, Ordering::Relaxed);
-                        } else if !stale
+                        if !stale
                             && !this.is_current(
                                 &job.key,
                                 job.message.payload.len(),
@@ -787,46 +844,11 @@ impl MessageCache {
         })
     }
 
-    /// Whether the cache has no room left for even the smallest payload it
-    /// stores. moka evicts to stay *under* its cap, so "full" cannot mean
-    /// "at the cap"; the smallest cacheable payload's uncompressed size is a
-    /// deliberately generous stand-in for what the next entry will weigh.
-    pub fn is_full(&self) -> bool {
-        let max = self.shared.max_bytes.load(Ordering::Relaxed);
-        let used = self.shared.cache().weighted_size();
-        used.saturating_add(self.shared.config.min_payload_bytes as u64) > max
-    }
-
-    /// The cheap version, for after every write: moka's own size, which lags
-    /// by its pending writes, and the settling [`Self::refresh_full`] only
-    /// once the cache is within a quarter of its cap. Settling on every
-    /// write made each one run moka's whole maintenance pass and the four
-    /// compression threads queue behind one another on its lock.
-    fn update_full_after_write(&self, weight: u64) {
-        let max = self.shared.max_bytes.load(Ordering::Relaxed);
-        let unsettled = self
-            .shared
-            .written_since_settle
-            .fetch_add(weight, Ordering::AcqRel)
-            + weight;
-        if self
-            .shared
-            .cache()
-            .weighted_size()
-            .saturating_add(unsettled)
-            >= max - max / 4
-        {
-            self.refresh_full();
-        }
-    }
-
-    /// Re-reads fullness after letting moka apply its pending writes, which
-    /// is what makes recent inserts count, and publishes it for the fetch
-    /// path. Only for threads that are already off the fetch path.
+    /// Lets moka apply its pending writes and removals, which is what makes
+    /// recent inserts and purges visible. Only for threads that are already
+    /// off the fetch path.
     fn refresh_full(&self) {
-        self.shared.written_since_settle.store(0, Ordering::Release);
         self.shared.cache().run_pending_tasks();
-        self.shared.full.store(self.is_full(), Ordering::Release);
     }
 
     /// Uncompressed bytes waiting for, or in, a compression slot.
@@ -897,10 +919,32 @@ impl MessageCache {
             range.lowest = range.lowest.min(key.offset);
             range.highest = range.highest.max(key.offset);
         }
+        let weight = entry.weight();
+        let max = self.shared.max_bytes.load(Ordering::Relaxed);
+        if u64::from(weight) > max {
+            // Larger than the whole cache: nothing could be evicted to fit it.
+            self.shared.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.shared.compressions.fetch_add(1, Ordering::Relaxed);
-        let weight = u64::from(entry.weight());
-        self.shared.cache().insert(key, Arc::new(entry));
-        self.update_full_after_write(weight);
+        let entry = Arc::new(entry);
+        let id = Arc::as_ptr(&entry) as usize;
+        let cache = self.shared.cache();
+        cache.insert(key.clone(), entry);
+        // New entries take precedence: if this write took the cache past its
+        // cap, evict the oldest-untouched and biggest down to 90% of it.
+        let evicted = {
+            let mut usage = lock(&self.shared.usage);
+            usage.record(key.clone(), weight, id);
+            if usage.bytes > max {
+                usage.make_room(&key, max - max / 10)
+            } else {
+                Vec::new()
+            }
+        };
+        for victim in &evicted {
+            cache.invalidate(victim);
+        }
     }
 
     /// One summary line per burst: the first store of a burst schedules it,
@@ -1273,46 +1317,84 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_full_cache_declines_new_stores_without_copying_them() {
+    /// Bytes that really weigh `len` once stored: unlike `noise`, xorshift
+    /// does not compress.
+    fn incompressible(len: usize, seed: u32) -> CachedMessage {
+        let mut x = 0x9E37_79B9_u32.wrapping_add(seed) | 1;
+        let mut m = message(len);
+        m.payload = (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        m
+    }
+
+    #[test]
+    fn a_full_cache_makes_room_for_the_newest_entry() {
         let cache = MessageCache::new(CacheConfig {
-            // Two ~10 KB entries fit; a third (and the headroom) does not.
-            max_bytes: 22_000,
+            max_bytes: 40_000,
             ..CacheConfig::default()
         });
-        for offset in 0..10 {
-            // xorshift: unlike `noise`, it does not compress, so each entry
-            // really weighs ~10 KB.
-            let mut x = 0x9E37_79B9_u32.wrapping_add(offset as u32) | 1;
-            let mut m = message(10_000);
-            m.payload = (0..10_000)
-                .map(|_| {
-                    x ^= x << 13;
-                    x ^= x >> 17;
-                    x ^= x << 5;
-                    x as u8
-                })
-                .collect();
-            cache.store_now(key(offset), m);
+        for offset in 0..20 {
+            cache.store_now(key(offset), incompressible(10_000, offset as u32));
+            assert!(
+                cache.get(&key(offset)).is_some(),
+                "entry {offset} was just stored and must be kept"
+            );
         }
-        cache.refresh_full();
-        assert!(cache.is_full());
-
-        let copied = Arc::new(AtomicUsize::new(0));
-        let counter = copied.clone();
-        let m = message(10_000);
-        cache.store_in_background(
-            &Handle::current(),
-            key(99),
-            m.payload.len(),
-            None,
-            move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-                m
-            },
+        assert!(
+            cache.weighted_bytes() <= 40_000,
+            "{}",
+            cache.weighted_bytes()
         );
-        assert_eq!(copied.load(Ordering::SeqCst), 0);
-        assert_eq!(cache.queued_bytes(), 0);
+        assert!(cache.get(&key(0)).is_none(), "the oldest was evicted");
+    }
+
+    #[test]
+    fn the_oldest_untouched_goes_before_one_that_was_just_read() {
+        let cache = MessageCache::new(CacheConfig {
+            max_bytes: 35_000,
+            ..CacheConfig::default()
+        });
+        for offset in 0..3 {
+            cache.store_now(key(offset), incompressible(10_000, offset as u32));
+        }
+        // Entry 0 is the oldest, but it is read: 1 is now the oldest untouched.
+        assert!(cache.get(&key(0)).is_some());
+        cache.store_now(key(3), incompressible(10_000, 3));
+        assert!(cache.get(&key(1)).is_none(), "oldest untouched evicted");
+        assert!(cache.get(&key(0)).is_some(), "recently read entry kept");
+        assert!(cache.get(&key(3)).is_some());
+    }
+
+    #[test]
+    fn a_big_idle_entry_goes_before_a_small_one_of_the_same_age() {
+        let cache = MessageCache::new(CacheConfig {
+            max_bytes: 30_000,
+            ..CacheConfig::default()
+        });
+        cache.store_now(key(1), incompressible(5_000, 1));
+        cache.store_now(key(2), incompressible(20_000, 2));
+        cache.store_now(key(3), incompressible(10_000, 3));
+        assert!(cache.get(&key(2)).is_none(), "the biggest was evicted");
+        assert!(cache.get(&key(1)).is_some());
+        assert!(cache.get(&key(3)).is_some());
+    }
+
+    #[test]
+    fn a_payload_larger_than_the_whole_cache_is_declined() {
+        let cache = MessageCache::new(CacheConfig {
+            max_bytes: 10_000,
+            ..CacheConfig::default()
+        });
+        cache.store_now(key(1), incompressible(5_000, 1));
+        cache.store_now(key(2), incompressible(20_000, 2));
+        assert!(cache.get(&key(2)).is_none());
+        assert!(cache.get(&key(1)).is_some(), "nothing was evicted for it");
     }
 
     #[test]
@@ -1524,25 +1606,15 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn the_queue_is_discarded_once_the_cache_is_full() {
+    async fn a_full_cache_keeps_storing_newer_entries_from_the_queue() {
         let cache = MessageCache::new(CacheConfig {
             max_pending_stores: 1,
-            // Room for one ~100 KB entry and not the headroom for another.
             max_bytes: 102_000,
             ..CacheConfig::default()
         });
         let handle = Handle::current();
         for offset in 0..8 {
-            let mut x = 0x9E37_79B9_u32.wrapping_add(offset as u32) | 1;
-            let mut m = message(100_000);
-            m.payload = (0..100_000)
-                .map(|_| {
-                    x ^= x << 13;
-                    x ^= x >> 17;
-                    x ^= x << 5;
-                    x as u8
-                })
-                .collect();
+            let m = incompressible(100_000, offset as u32);
             cache.store_in_background(&handle, key(offset), m.payload.len(), None, || m);
         }
         for _ in 0..200 {
@@ -1552,12 +1624,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         assert_eq!(cache.queued_bytes(), 0, "the queue drained");
-        assert!(cache.compressions() >= 1);
-        assert!(
-            cache.compressions() < 8,
-            "once full, queued stores are dropped, not compressed ({})",
-            cache.compressions()
-        );
+        assert_eq!(cache.compressions(), 8, "every store was written");
+        assert!(cache.get(&key(7)).is_some(), "the newest is cached");
+        assert!(cache.weighted_bytes() <= 102_000);
     }
 
     #[test]

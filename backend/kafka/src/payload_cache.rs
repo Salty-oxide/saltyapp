@@ -95,16 +95,13 @@ pub fn to_topic_message(partition: i32, offset: i64, cached: &CachedMessage) -> 
     }
 }
 
-/// The app's shared payload cache, reporting to the Logs panel through the
-/// client log sink. A newtype so `RdKafkaClient` can keep deriving `Default`.
+/// The app's shared payload cache. A newtype so `RdKafkaClient` can keep
+/// deriving `Default`.
 pub struct PayloadCache(pub MessageCache);
 
 impl Default for PayloadCache {
     fn default() -> Self {
-        Self(MessageCache::with_listener(
-            CacheConfig::default(),
-            |event| crate::client_log::log_cache_line(event.message()),
-        ))
+        Self(MessageCache::new(CacheConfig::default()))
     }
 }
 

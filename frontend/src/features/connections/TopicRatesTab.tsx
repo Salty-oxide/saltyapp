@@ -9,7 +9,7 @@ import {
   statNumber,
   TOOLTIP_PROPS,
 } from "./metricsChartStyle";
-import { ensureSampling, SAMPLE_INTERVAL_MS, touchSampling } from "./topicRateSampler";
+import { ensureSampling, sampleNow, SAMPLE_INTERVAL_MS, stopSampling, touchSampling } from "./topicRateSampler";
 import { EMPTY_RATE_HISTORY, RATE_RANGES, RateRange, RateRangeId, seriesFor } from "./topicRates";
 import { topicRateKey, useTopicRateStore } from "./useTopicRateStore";
 
@@ -134,6 +134,8 @@ export function TopicRatesTab({ connectionId, topicName }: TopicRatesTabProps) {
 
   useEffect(() => {
     ensureSampling(connectionId, topicName);
+    // Sample only while the tab is open: nobody is looking otherwise.
+    return () => stopSampling(connectionId, topicName);
   }, [connectionId, topicName]);
 
   // Re-evaluated as time passes, so the window slides even when no sample lands.
@@ -153,10 +155,24 @@ export function TopicRatesTab({ connectionId, topicName }: TopicRatesTabProps) {
   const hasProduced = points.some((p) => p.produced !== null);
   const hasConsumed = points.some((p) => p.consumed !== null);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    setRefreshing(true);
+    void sampleNow(connectionId, topicName).finally(() => {
+      setRefreshing(false);
+      setNow(Date.now());
+    });
+  };
+
   const collecting = `Collecting samples — a rate appears after the second one (every ${SAMPLE_INTERVAL_MS / 1000} s, while the app is in front).`;
 
   return (
     <div className="metrics-tab">
+      <div className="metrics-tab__toolbar">
+        <button type="button" onClick={refresh} disabled={refreshing}>
+          Refresh
+        </button>
+      </div>
       <div className="metrics-stats">
         <div role="group" aria-label="Total produced in range">
           <StatCard label="Produced" value={statNumber(producedTotal)} title={producedTotal.toLocaleString()} />
