@@ -93,11 +93,8 @@ function PayloadCacheSizeField() {
         />
       </label>
       <p className="settings-panel__hint">
-        Memory the app may use to keep message payloads larger than 4 KB, compressed, so opening a message is instant
-        instead of a trip to the broker. {payloadCacheBytes === 0 ? "The cache is off. " : ""}
-        0 turns it off; otherwise {MIN_PAYLOAD_CACHE_BYTES / MIB}–{MAX_PAYLOAD_CACHE_BYTES / MIB} MB. This is separate
-        from — and in addition to — the memory the tabs hold. Changing it empties the cache. Entries not opened for 15
-        minutes are dropped regardless.
+        Memory used to keep payloads over 4 KB, compressed, so opening a message skips the broker. {payloadCacheBytes === 0 ? "The cache is off. " : ""}0 turns it off;
+        otherwise {MIN_PAYLOAD_CACHE_BYTES / MIB}–{MAX_PAYLOAD_CACHE_BYTES / MIB} MB. Changing it empties the cache.
       </p>
     </>
   );
@@ -170,9 +167,7 @@ function GeneralSettingsTab() {
           />
         </label>
         <p className="settings-panel__hint">
-          How much message payload one Fetch delivers to the UI before stopping — the previews shown, not the bytes read
-          from the network. Every other limit on the Data tab counts messages, which says
-          nothing about size — on a topic of multi-megabyte records, "100 messages" can be several gigabytes.
+          How much message payload one Fetch delivers to the UI before stopping.
         </p>
         <PayloadCacheSizeField />
       </section>

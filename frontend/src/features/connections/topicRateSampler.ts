@@ -112,14 +112,17 @@ interface Sampler {
   timer: ReturnType<typeof setInterval>;
   /** When the topic's Rates tab was last open (or asked for), for eviction and for stopping unwatched samplers. */
   lastViewedAt: number;
+  /** Takes a sample now, whatever the interval says. */
+  sampleNow: () => Promise<void>;
 }
 
 const samplers = new Map<string, Sampler>();
 
 /**
- * Starts sampling a topic, once. It keeps going after the tab that asked for
- * it is closed — so the chart has history when it is opened again — until the
- * cluster disconnects (`stopSamplingForConnection`) or sampling keeps failing.
+ * Starts sampling a topic, once. It runs only while the tab that asked for it
+ * is open (`stopSampling`), and ends earlier if the cluster disconnects
+ * (`stopSamplingForConnection`) or sampling keeps failing. History recorded so
+ * far stays, so reopening the tab shows it with a gap.
  *
  * Ticks are skipped while the app is not in front. That is the same rule the
  * rest of the app's polling follows, and it matters here: these requests count
@@ -148,7 +151,8 @@ export function ensureSampling(connectionId: string, topic: string): void {
   let failures = 0;
   let inFlight = false;
 
-  async function tick() {
+  /** `force` is the Refresh button: the person is looking, so focus is not checked. */
+  async function tick(force = false) {
     const sampler = samplers.get(key);
     // Nobody has had this topic's Rates tab open for a long while: its
     // history stays, but it stops costing the cluster a call every 30 s.
@@ -156,7 +160,7 @@ export function ensureSampling(connectionId: string, topic: string): void {
       stop(key);
       return;
     }
-    if (inFlight || !focusManager.isFocused()) return;
+    if (inFlight || (!force && !focusManager.isFocused())) return;
     inFlight = true;
     try {
       const sample = await takeSample(connectionId, topic, discovery);
@@ -174,8 +178,20 @@ export function ensureSampling(connectionId: string, topic: string): void {
     connectionId,
     timer: setInterval(() => void tick(), SAMPLE_INTERVAL_MS),
     lastViewedAt: Date.now(),
+    sampleNow: () => tick(true),
   });
   void tick();
+}
+
+/**
+ * Takes a sample of a topic now (the Refresh button) and resolves once it is
+ * recorded. Starts sampling the topic if it was not already. A sample already
+ * in flight is not duplicated.
+ */
+export async function sampleNow(connectionId: string, topic: string): Promise<void> {
+  ensureSampling(connectionId, topic);
+  const sampler = samplers.get(topicRateKey(connectionId, topic));
+  if (sampler) await sampler.sampleNow();
 }
 
 /**
@@ -185,6 +201,14 @@ export function ensureSampling(connectionId: string, topic: string): void {
 export function touchSampling(connectionId: string, topic: string): void {
   const sampler = samplers.get(topicRateKey(connectionId, topic));
   if (sampler) sampler.lastViewedAt = Date.now();
+}
+
+/**
+ * Stops sampling a topic — called when its Rates tab closes, so an unwatched
+ * topic costs the cluster nothing. Its recorded history stays in the store.
+ */
+export function stopSampling(connectionId: string, topic: string): void {
+  stop(topicRateKey(connectionId, topic));
 }
 
 /** How many topics are being sampled. */

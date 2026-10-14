@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setInvokeHandlers } from "../../lib/testInvoke";
 import { TopicRatesTab } from "./TopicRatesTab";
-import { stopSamplingForConnection } from "./topicRateSampler";
+import { activeSamplerCount, stopSamplingForConnection } from "./topicRateSampler";
 import { MINUTE_MS } from "./topicRates";
 import { topicRateKey, useTopicRateStore } from "./useTopicRateStore";
 
@@ -110,5 +110,27 @@ describe("TopicRatesTab", () => {
     renderTab();
 
     await vi.waitFor(() => expect(partitions).toHaveBeenCalled());
+  });
+
+  it("stops sampling the topic when the tab closes", async () => {
+    const partitions = vi.fn(() => [{ id: 0, leader: 1, replicas: [1], isr: [1], lowOffset: 0, highOffset: 5 }]);
+    setInvokeHandlers({ connection_list_partitions: partitions, connection_list_consumer_groups: () => [] });
+    const { unmount } = renderTab();
+    await vi.waitFor(() => expect(activeSamplerCount()).toBe(1));
+
+    unmount();
+
+    expect(activeSamplerCount()).toBe(0);
+  });
+
+  it("takes a sample at once when Refresh is pressed", async () => {
+    const partitions = vi.fn(() => [{ id: 0, leader: 1, replicas: [1], isr: [1], lowOffset: 0, highOffset: 5 }]);
+    setInvokeHandlers({ connection_list_partitions: partitions, connection_list_consumer_groups: () => [] });
+    renderTab();
+    await vi.waitFor(() => expect(partitions).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await vi.waitFor(() => expect(partitions).toHaveBeenCalledTimes(2));
   });
 });

@@ -3197,6 +3197,9 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
+  /* A flex item with overflow hidden may shrink to nothing inside the
+     scrolling `.metrics-tab` column, leaving only the header row visible. */
+  flex-shrink: 0;
   font-size: var(--font-size-sm);
 }
 .metrics-overview__row {

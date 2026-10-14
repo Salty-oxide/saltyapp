@@ -246,7 +246,7 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   JSON, 22 is 1.3 MB/s and no smaller than 19, and a bounded number of
   compressions at that speed caches almost nothing from a big fetch; the key
   includes the **connection id**, since two clusters share topic names and
-  offsets; and expiry is time-to-*idle* (15 min, reset on read), not TTL. The
+  offsets; and expiry is time-to-*idle* (60 min, reset on read), not TTL. The
   cache answers without asking the broker, so it must not outlive what filled
   it: `release()` (disconnect, delete, idle disconnect, config update) purges
   the connection, and a fetch that sees a high watermark at or below an
