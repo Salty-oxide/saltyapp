@@ -221,8 +221,11 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   payload over 4 KB into it *in the background* — every store is an event on an
   unbounded channel drained by one listener task, which runs at most 4
   compressions at once on its own `rayon` pool (not tokio's blocking pool, which
-  the fetch consumers need). The queue is bounded in *bytes* (256 MB of uncompressed
-  copies, `MAX_QUEUED_BYTES`): a store past that is **dropped**, because an
+  the fetch consumers need). The queue is bounded in *bytes* (32 MB of uncompressed
+  copies, `MAX_QUEUED_BYTES` — every queued copy is made on the fetch thread, so
+  this is the fetch's budget: 256 MB measurably doubled a fast fetch, 32 MB did
+  not; the copy reuses idle buffers from `take_buffer`, a 32 MB pool, which
+  trims allocation cost but did not change that measurement): a store past that is **dropped**, because an
   unbounded queue would hold a copy of every payload in a very fast fetch. A
   queued store is also discarded if a purge/resize happened after it was queued;
   and once the cache is *full* new stores are declined up front and the queue
@@ -232,9 +235,14 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   (`point_read_target`) and answers from the cache with no consumer and no
   handshake, otherwise falling through to the broker, whose result fills the
   entry. So no Tauri command changed. Decisions that are easy to undo by
-  accident: the grid's inline bound is **4 KB** (`MAX_INLINE_PAYLOAD_BYTES =
-  VALUE_PREVIEW_BYTES`), not the 256 KB it was, because the cache is what makes
-  a larger one unnecessary; zstd level is **10**, not 22 — measured on 4 MB of
+  accident: the grid's inline bound is **64 KB** (`MAX_INLINE_PAYLOAD_BYTES`; the
+  4 KB `VALUE_PREVIEW_BYTES` is only what a cell decodes and the floor
+  `inlinePayloadBytesFor` prices large fetches down to), not the 256 KB it was.
+  Rows up to it arrive whole, so the cache stores only what the fetch actually
+  truncated — `MessageCache::wants_above(len, filter.max_payload_preview_bytes)`
+  — whatever bound that fetch was sent; payloads of 64 KB or less are stored *uncompressed* (`MIN_COMPRESS_BYTES`; it
+  saves the CPU, not the fetch-thread copy, so the byte cap holds fewer of
+  them); zstd level is **10**, not 22 — measured on 4 MB of
   JSON, 22 is 1.3 MB/s and no smaller than 19, and a bounded number of
   compressions at that speed caches almost nothing from a big fetch; the key
   includes the **connection id**, since two clusters share topic names and

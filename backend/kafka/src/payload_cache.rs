@@ -37,6 +37,27 @@ pub fn to_cached(
     headers: &[MessageHeader],
     payload: &[u8],
 ) -> CachedMessage {
+    to_cached_into(
+        Vec::with_capacity(payload.len()),
+        timestamp_ms,
+        key,
+        headers,
+        payload,
+    )
+}
+
+/// [`to_cached`], copying the payload into `buffer` — one from
+/// [`MessageCache::take_buffer`], so the copy on the fetch thread reuses
+/// memory instead of allocating it.
+pub fn to_cached_into(
+    mut buffer: Vec<u8>,
+    timestamp_ms: Option<i64>,
+    key: Option<&[u8]>,
+    headers: &[MessageHeader],
+    payload: &[u8],
+) -> CachedMessage {
+    buffer.clear();
+    buffer.extend_from_slice(payload);
     CachedMessage {
         timestamp_ms,
         key: key.map(<[u8]>::to_vec),
@@ -50,7 +71,7 @@ pub fn to_cached(
                     .and_then(|v| BASE64.decode(v).ok()),
             })
             .collect(),
-        payload: payload.to_vec(),
+        payload: buffer,
     }
 }
 
@@ -133,6 +154,16 @@ mod tests {
         let mut timed = point();
         timed.from_timestamp_ms = Some(1);
         assert_eq!(point_read_target(&timed), None);
+    }
+
+    #[test]
+    fn copying_into_a_supplied_buffer_keeps_its_allocation_and_clears_it() {
+        let mut buffer = Vec::with_capacity(1_000);
+        buffer.extend_from_slice(b"stale bytes from an earlier message");
+        let pointer = buffer.as_ptr();
+        let cached = to_cached_into(buffer, Some(1), None, &[], b"fresh");
+        assert_eq!(cached.payload, b"fresh");
+        assert_eq!(cached.payload.as_ptr(), pointer);
     }
 
     #[test]

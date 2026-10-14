@@ -2310,7 +2310,12 @@ impl KafkaClient for RdKafkaClient {
                         // The closure is what copies the payload, and the
                         // cache only calls it once a compression slot is
                         // free — and not at all for one cached unchanged.
-                        if payload_cache.wants(payload.len()) {
+                        // Only what this fetch truncated: a payload that fit in
+                        // the row's inline bound is already in the grid.
+                        if payload_cache.wants_above(
+                            payload.len(),
+                            filter.max_payload_preview_bytes.unwrap_or(0) as usize,
+                        ) {
                             payload_cache.store_in_background(
                                 &runtime,
                                 salty_cache::MessageKey::new(
@@ -2322,7 +2327,8 @@ impl KafkaClient for RdKafkaClient {
                                 payload.len(),
                                 message.timestamp_ms,
                                 || {
-                                    crate::payload_cache::to_cached(
+                                    crate::payload_cache::to_cached_into(
+                                        payload_cache.take_buffer(payload.len()),
                                         message.timestamp_ms,
                                         borrowed.key(),
                                         &message.headers,
