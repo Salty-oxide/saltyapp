@@ -43,30 +43,32 @@ describe("toMessageFilter", () => {
     expect(toMessageFilter(emptyFilterForm()).maxPayloadPreviewBytes).not.toBeNull();
   });
 
-  // Opening a row used to depend on the grid carrying up to 256 KB of every
-  // payload, so the viewer rarely had to ask the broker. The backend's payload
-  // cache (`salty_cache`) now holds every payload over a grid cell's worth,
-  // compressed, so the webview carries only that — a few KB per row.
-  it("carries only what a grid cell decodes, leaving larger payloads to the backend's cache", () => {
+  // A row at or under 64 KB arrives whole, so opening it asks nobody. The
+  // retention budget prices larger fetches below that.
+  it("carries up to 64 KB of each payload for an ordinary fetch", () => {
     expect(toMessageFilter(emptyFilterForm()).maxPayloadPreviewBytes).toBe(MAX_INLINE_PAYLOAD_BYTES);
-    expect(MAX_INLINE_PAYLOAD_BYTES).toBe(VALUE_PREVIEW_BYTES);
+    expect(MAX_INLINE_PAYLOAD_BYTES).toBe(64 * 1024);
   });
 
-  // With the bound at the floor there is nothing for the retention budget to
-  // shrink: more rows never means a smaller bound, and the total a fetch can
-  // hold only passes the budget past 16,000 rows.
-  it("holds the same per-row bound however many rows are asked for", () => {
-    for (const rows of ["1", "512", "10000"]) {
+  it("holds the per-row bound while the fetch fits the retention budget", () => {
+    for (const rows of ["1", "512", "1024"]) {
       expect(
         toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: rows }).maxPayloadPreviewBytes,
-      ).toBe(VALUE_PREVIEW_BYTES);
+      ).toBe(MAX_INLINE_PAYLOAD_BYTES);
     }
-    expect(PAYLOAD_RETENTION_BUDGET_BYTES / VALUE_PREVIEW_BYTES).toBe(16_384);
+    expect(PAYLOAD_RETENTION_BUDGET_BYTES / MAX_INLINE_PAYLOAD_BYTES).toBe(1_024);
   });
 
-  // The floor, and the reason this can never retain more than the code it
-  // replaced: a fetch big enough to price each row below the grid's own
-  // preview gets exactly the old bound back.
+  // The reason a fetch can never retain more than the budget: past 1,024 rows
+  // each row's share of it shrinks.
+  it("prices each row out of the retention budget past 1,024 rows", () => {
+    expect(
+      toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: "10000" }).maxPayloadPreviewBytes,
+    ).toBe(Math.floor(PAYLOAD_RETENTION_BUDGET_BYTES / 10_000));
+  });
+
+  // The floor: a fetch big enough to price each row below the grid's own
+  // preview still gets what a grid cell decodes.
   it("never drops below what the grid cell decodes, however many rows are asked for", () => {
     expect(
       toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: "1000000" }).maxPayloadPreviewBytes,
@@ -75,8 +77,8 @@ describe("toMessageFilter", () => {
 
   // With no overall budget and no explicit partition list the row count is
   // whatever the topic's partition count makes it, which this form cannot
-  // see — so it stays at the old conservative bound rather than guessing.
-  it("stays at the grid's bound when the fetch has no knowable row count", () => {
+  // see — so it stays at the conservative floor rather than guessing.
+  it("stays at the grid's floor when the fetch has no knowable row count", () => {
     expect(
       toMessageFilter({ ...emptyFilterForm(), maxTotalMessages: "" }).maxPayloadPreviewBytes,
     ).toBe(VALUE_PREVIEW_BYTES);

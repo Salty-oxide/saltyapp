@@ -243,21 +243,22 @@ export function isPayloadTruncated(payloadBase64: string | null, payloadSizeByte
 }
 
 /**
- * The most of any one payload a grid fetch carries back: what a grid cell
- * decodes, [`VALUE_PREVIEW_BYTES`].
+ * The most of any one payload a grid fetch carries back: 64 KB.
  *
- * It used to be 256 KB, so that opening an ordinary record needed no second
- * trip to the broker. That is now the payload cache's job: the backend keeps
- * every payload over this size, compressed, from the fetch that brought its
- * preview (`salty_cache`), and opening a row is a lookup there. So the webview
- * holds a few KB per row instead of up to 256 KB, and a fetch of 1,000 rows
- * costs it ~4 MB rather than tens of megabytes.
+ * A row at or under this arrives whole with the stream, so opening it needs no
+ * lookup at all. It used to be 256 KB, which was too heavy (a fetch of 1,000
+ * such rows held hundreds of MB), then 4 KB with the backend's payload cache
+ * answering every larger open. 64 KB is the middle: the cache no longer has to
+ * hold, copy and store the common 4–64 KB record, and what the webview holds
+ * stays bounded by [`PAYLOAD_RETENTION_BUDGET_BYTES`] through
+ * [`inlinePayloadBytesFor`] — a fetch of more than 1,024 rows is priced below
+ * this, down to [`VALUE_PREVIEW_BYTES`] past 16,000.
  *
- * A row the cache no longer has (evicted, expired after 15 idle minutes, or
- * refused when the cache was full) falls back to the broker, exactly as a
- * truncated row always did.
+ * The backend caches exactly what a fetch truncated, whatever bound it was
+ * sent, so a row longer than this (or than its priced bound) is still one
+ * cache lookup away.
  */
-export const MAX_INLINE_PAYLOAD_BYTES = VALUE_PREVIEW_BYTES;
+export const MAX_INLINE_PAYLOAD_BYTES = 64 * 1024;
 
 /**
  * Total payload bytes one fetch's rows may hold in the webview at once.
@@ -277,8 +278,8 @@ export const PAYLOAD_RETENTION_BUDGET_BYTES = 64 * 1024 * 1024;
  * [`MAX_INLINE_PAYLOAD_BYTES`], so the bytes one fetch retains never exceed
  * `max(PAYLOAD_RETENTION_BUDGET_BYTES, rows * VALUE_PREVIEW_BYTES)` — and
  * that second term is exactly what a flat `VALUE_PREVIEW_BYTES` bound
- * retained. A fetch can therefore never hold more than the code this
- * replaced, whatever the user types into the filter form.
+ * retained. A fetch can therefore never hold more than that, whatever the
+ * user types into the filter form.
  *
  * `null` rows means the count isn't knowable from the filter alone (no
  * overall budget and no explicit partition list, so it is the topic's

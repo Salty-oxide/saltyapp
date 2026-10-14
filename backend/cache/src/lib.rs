@@ -79,7 +79,22 @@ pub const MAX_PENDING_STORES: usize = 4;
 
 /// Uncompressed bytes that may wait for a compression slot. Past this a store
 /// is dropped rather than queued.
-pub const MAX_QUEUED_BYTES: u64 = 256 * 1024 * 1024;
+///
+/// This is the fetch loop's budget, not a memory limit: each queued store is a
+/// copy made *on the fetch thread*, so the bound is also how much copying a
+/// fast fetch can be made to do for the cache's sake. Measured against a real
+/// broker, 1,500 x 300 KB messages: 256 MB took the fetch from 125 ms to
+/// ~300 ms, 128 MB to ~190 ms, 32 MB left it at 125 ms.
+pub const MAX_QUEUED_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Payloads at or under this size are kept as they are, not compressed. A
+/// small payload costs little memory and little to copy, and compressing it
+/// is CPU spent for a saving nobody needs; the cache's byte cap simply holds
+/// fewer of them than it would compressed ones.
+pub const MIN_COMPRESS_BYTES: usize = 64 * 1024;
+
+/// Idle buffers kept for reuse by [`MessageCache::take_buffer`].
+pub const MAX_POOLED_BYTES: u64 = 32 * 1024 * 1024;
 
 /// How long stores are gathered before one summary line is logged.
 pub const LOG_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -225,6 +240,11 @@ pub struct CacheConfig {
     pub max_pending_stores: usize,
     /// Uncompressed bytes allowed to wait for one; see [`MAX_QUEUED_BYTES`].
     pub max_queued_bytes: u64,
+    /// Payloads this size or smaller are stored uncompressed; see
+    /// [`MIN_COMPRESS_BYTES`]. `0` compresses everything.
+    pub min_compress_bytes: usize,
+    /// Idle payload buffers kept for reuse; see [`MAX_POOLED_BYTES`].
+    pub max_pooled_bytes: u64,
     /// How long stores are gathered before one summary line is logged.
     pub log_debounce: Duration,
     /// How often expired entries are released while the cache is idle.
@@ -240,6 +260,8 @@ impl Default for CacheConfig {
             zstd_level: ZSTD_DEFAULT_LEVEL,
             max_pending_stores: MAX_PENDING_STORES,
             max_queued_bytes: MAX_QUEUED_BYTES,
+            min_compress_bytes: MIN_COMPRESS_BYTES,
+            max_pooled_bytes: MAX_POOLED_BYTES,
             log_debounce: LOG_DEBOUNCE,
             maintenance_interval: MAINTENANCE_INTERVAL,
         }
@@ -247,7 +269,10 @@ impl Default for CacheConfig {
 }
 
 struct Entry {
+    /// The payload as zstd compressed it — or, when `raw`, as it came.
     compressed: Box<[u8]>,
+    /// Stored without compression ([`MIN_COMPRESS_BYTES`]).
+    raw: bool,
     payload_len: usize,
     timestamp_ms: Option<i64>,
     key: Option<Vec<u8>>,
@@ -288,6 +313,15 @@ struct PendingLog {
     last_key: String,
 }
 
+/// Idle payload buffers, so the copy a store makes on the fetch thread reuses
+/// memory instead of allocating — a 300 KB `Vec` is a fresh mapping and a run
+/// of page faults every time, which is most of what the copy costs.
+#[derive(Default)]
+struct BufferPool {
+    buffers: Vec<Vec<u8>>,
+    bytes: u64,
+}
+
 /// One store waiting for a compression slot.
 struct StoreJob {
     key: MessageKey,
@@ -313,11 +347,16 @@ struct Shared {
     pool: OnceLock<rayon::ThreadPool>,
     /// Uncompressed bytes queued or compressing.
     queued_bytes: AtomicU64,
+    /// Buffers handed back by finished compressions.
+    buffers: Mutex<BufferPool>,
     /// Whether the cache had no room at the last look. Read by the fetch
     /// path in place of asking moka, which the fetch path never touches;
     /// refreshed by whatever already runs off it (a write, a purge, the
     /// maintenance timer).
     full: AtomicBool,
+    /// Bytes written since moka's size was last settled; what its size read
+    /// lags by.
+    written_since_settle: AtomicU64,
     /// Stores declined, folded into the next summary. Its own counter so
     /// declining one never takes the log's lock.
     skipped: AtomicU64,
@@ -426,6 +465,8 @@ impl MessageCache {
                 queued_bytes: AtomicU64::new(0),
                 full: AtomicBool::new(false),
                 skipped: AtomicU64::new(0),
+                buffers: Mutex::new(BufferPool::default()),
+                written_since_settle: AtomicU64::new(0),
                 epoch: AtomicU64::new(0),
                 config,
                 listener,
@@ -477,6 +518,7 @@ impl MessageCache {
         };
         lock(&self.shared.ranges).clear();
         self.shared.epoch.fetch_add(1, Ordering::AcqRel);
+        self.drop_pooled_buffers();
         self.refresh_full();
         self.shared.emit(CacheEvent::Resized { max_bytes, dropped });
         true
@@ -485,6 +527,18 @@ impl MessageCache {
     /// Whether a payload of this size belongs in the cache at all.
     pub fn wants(&self, payload_len: usize) -> bool {
         self.enabled() && payload_len > self.shared.config.min_payload_bytes
+    }
+
+    /// Whether a payload of this size is worth storing for a fetch that
+    /// already carried the first `inline_bytes` of every payload to the grid.
+    ///
+    /// The cache exists for what the grid had to truncate, so a payload that
+    /// fit in the row is not stored — nobody will ask for it again. Never
+    /// below the cache's own floor ([`Self::wants`]). `0` means the fetch
+    /// carried nothing inline (a whole-payload fetch, whose result is what
+    /// fills the cache for the row that was clicked).
+    pub fn wants_above(&self, payload_len: usize, inline_bytes: usize) -> bool {
+        self.wants(payload_len) && payload_len > inline_bytes
     }
 
     /// Whether the cache already holds this message unchanged.
@@ -514,7 +568,12 @@ impl MessageCache {
             return None;
         }
         let found = self.shared.cache().get(key).and_then(|entry| {
-            match zstd::bulk::decompress(&entry.compressed, entry.payload_len) {
+            let payload = if entry.raw {
+                Ok(entry.compressed.to_vec())
+            } else {
+                zstd::bulk::decompress(&entry.compressed, entry.payload_len)
+            };
+            match payload {
                 Ok(payload) => Some(CachedMessage {
                     timestamp_ms: entry.timestamp_ms,
                     key: entry.key.clone(),
@@ -659,6 +718,64 @@ impl MessageCache {
         })
     }
 
+    /// An empty buffer with room for `len` bytes, reusing an idle one when
+    /// there is one. Fill it and put it in a [`CachedMessage`]: the cache
+    /// hands it back to the pool once the payload is compressed.
+    ///
+    /// Best fit, so one huge buffer is not spent on a small payload while a
+    /// closer one waits.
+    pub fn take_buffer(&self, len: usize) -> Vec<u8> {
+        let reused = {
+            let mut pool = lock(&self.shared.buffers);
+            let best = pool
+                .buffers
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.capacity() >= len)
+                .min_by_key(|(_, b)| b.capacity())
+                .map(|(index, _)| index);
+            best.map(|index| {
+                let buffer = pool.buffers.swap_remove(index);
+                pool.bytes -= buffer.capacity() as u64;
+                buffer
+            })
+        };
+        match reused {
+            Some(mut buffer) => {
+                buffer.clear();
+                buffer
+            }
+            None => Vec::with_capacity(len),
+        }
+    }
+
+    /// Keeps a finished payload buffer for [`Self::take_buffer`], unless the
+    /// pool is full — then it is simply freed.
+    fn give_back(&self, mut buffer: Vec<u8>) {
+        let capacity = buffer.capacity() as u64;
+        if capacity == 0 || capacity > self.shared.config.max_pooled_bytes / 2 {
+            return;
+        }
+        buffer.clear();
+        let mut pool = lock(&self.shared.buffers);
+        if pool.bytes + capacity > self.shared.config.max_pooled_bytes || pool.buffers.len() >= 64 {
+            return;
+        }
+        pool.bytes += capacity;
+        pool.buffers.push(buffer);
+    }
+
+    /// Idle buffer bytes waiting for reuse.
+    pub fn pooled_bytes(&self) -> u64 {
+        lock(&self.shared.buffers).bytes
+    }
+
+    fn drop_pooled_buffers(&self) {
+        let mut pool = lock(&self.shared.buffers);
+        pool.buffers.clear();
+        pool.bytes = 0;
+    }
+
     /// The compression threads, started with the first store.
     fn compression_pool(&self) -> &rayon::ThreadPool {
         self.shared.pool.get_or_init(|| {
@@ -680,10 +797,34 @@ impl MessageCache {
         used.saturating_add(self.shared.config.min_payload_bytes as u64) > max
     }
 
+    /// The cheap version, for after every write: moka's own size, which lags
+    /// by its pending writes, and the settling [`Self::refresh_full`] only
+    /// once the cache is within a quarter of its cap. Settling on every
+    /// write made each one run moka's whole maintenance pass and the four
+    /// compression threads queue behind one another on its lock.
+    fn update_full_after_write(&self, weight: u64) {
+        let max = self.shared.max_bytes.load(Ordering::Relaxed);
+        let unsettled = self
+            .shared
+            .written_since_settle
+            .fetch_add(weight, Ordering::AcqRel)
+            + weight;
+        if self
+            .shared
+            .cache()
+            .weighted_size()
+            .saturating_add(unsettled)
+            >= max - max / 4
+        {
+            self.refresh_full();
+        }
+    }
+
     /// Re-reads fullness after letting moka apply its pending writes, which
     /// is what makes recent inserts count, and publishes it for the fetch
     /// path. Only for threads that are already off the fetch path.
     fn refresh_full(&self) {
+        self.shared.written_since_settle.store(0, Ordering::Release);
         self.shared.cache().run_pending_tasks();
         self.shared.full.store(self.is_full(), Ordering::Release);
     }
@@ -714,15 +855,25 @@ impl MessageCache {
     /// instants between that check and the insert still loses the race; the
     /// consequence is one stale entry, which idle expiry removes.)
     fn write_at(&self, key: MessageKey, message: CachedMessage, epoch: Option<u64>) {
-        let Ok(compressed) = zstd::bulk::compress(&message.payload, self.shared.config.zstd_level)
-        else {
+        let raw = message.payload.len() <= self.shared.config.min_compress_bytes;
+        let compressed = if raw {
+            Ok(message.payload.clone())
+        } else {
+            zstd::bulk::compress(&message.payload, self.shared.config.zstd_level)
+        };
+        let Ok(compressed) = compressed else {
+            self.give_back(message.payload);
             return;
         };
         if epoch.is_some_and(|e| e != self.shared.epoch.load(Ordering::Acquire)) {
+            self.give_back(message.payload);
             return;
         }
+        let payload_len = message.payload.len();
+        self.give_back(message.payload);
         let entry = Entry {
-            payload_len: message.payload.len(),
+            raw,
+            payload_len,
             compressed: compressed.into_boxed_slice(),
             timestamp_ms: message.timestamp_ms,
             key: message.key,
@@ -747,8 +898,9 @@ impl MessageCache {
             range.highest = range.highest.max(key.offset);
         }
         self.shared.compressions.fetch_add(1, Ordering::Relaxed);
+        let weight = u64::from(entry.weight());
         self.shared.cache().insert(key, Arc::new(entry));
-        self.refresh_full();
+        self.update_full_after_write(weight);
     }
 
     /// One summary line per burst: the first store of a burst schedules it,
@@ -809,6 +961,7 @@ impl MessageCache {
     /// what is currently held.
     pub fn clear(&self) -> u64 {
         self.shared.epoch.fetch_add(1, Ordering::AcqRel);
+        self.drop_pooled_buffers();
         self.shared.cache().run_pending_tasks();
         let cleared = self.shared.cache().entry_count();
         lock(&self.shared.ranges).clear();
@@ -1005,6 +1158,27 @@ mod tests {
     }
 
     #[test]
+    fn a_small_payload_is_stored_as_it_came_and_a_large_one_is_compressed() {
+        let cache = MessageCache::default();
+        let small = message(MIN_COMPRESS_BYTES);
+        cache.store_now(key(1), small.clone());
+        assert!(
+            cache.weighted_bytes() >= MIN_COMPRESS_BYTES as u64,
+            "{}",
+            cache.weighted_bytes()
+        );
+        assert_eq!(cache.get(&key(1)), Some(small));
+
+        let cache = MessageCache::default();
+        cache.store_now(key(2), message(MIN_COMPRESS_BYTES + 1));
+        assert!(
+            cache.weighted_bytes() < 10_000,
+            "{}",
+            cache.weighted_bytes()
+        );
+    }
+
+    #[test]
     fn it_is_compressed() {
         let cache = MessageCache::default();
         cache.store_now(key(1), message(1_000_000));
@@ -1121,7 +1295,7 @@ mod tests {
                 .collect();
             cache.store_now(key(offset), m);
         }
-        cache.shared.cache().run_pending_tasks();
+        cache.refresh_full();
         assert!(cache.is_full());
 
         let copied = Arc::new(AtomicUsize::new(0));
@@ -1173,6 +1347,146 @@ mod tests {
                 "the store finished with no blocking thread free"
             );
         });
+    }
+
+    /// The runtime's thread is the one that serves the UI's commands and
+    /// emits the stream's events. Nothing the cache does for a burst of
+    /// stores may hold it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_burst_of_stores_never_stalls_the_async_runtime() {
+        let cache = MessageCache::new(CacheConfig {
+            log_debounce: Duration::from_millis(20),
+            ..CacheConfig::default()
+        });
+        let handle = Handle::current();
+        let mut worst = Duration::ZERO;
+        let mut last = std::time::Instant::now();
+        for i in 0..400i64 {
+            let payload: Vec<u8> = (0..60_000u32)
+                .map(|j| (j.wrapping_mul(2_654_435_761).wrapping_add(i as u32) >> 13) as u8)
+                .collect();
+            cache.store_in_background(&handle, key(i), payload.len(), None, move || {
+                CachedMessage {
+                    timestamp_ms: None,
+                    key: None,
+                    headers: Vec::new(),
+                    payload,
+                }
+            });
+            if i % 8 == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                worst = worst.max(last.elapsed());
+                last = std::time::Instant::now();
+            }
+        }
+        for _ in 0..400 {
+            if cache.queued_bytes() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            worst = worst.max(last.elapsed());
+            last = std::time::Instant::now();
+        }
+        assert!(
+            worst < Duration::from_millis(150),
+            "the runtime thread was held for {worst:?} (compressed {})",
+            cache.compressions()
+        );
+    }
+
+    #[test]
+    fn only_what_the_grid_had_to_truncate_is_wanted() {
+        let cache = MessageCache::default();
+        // The grid carried 64 KB of each row: a 10 KB payload fit, a 70 KB
+        // one did not.
+        assert!(!cache.wants_above(10_000, 64 * 1024));
+        assert!(!cache.wants_above(64 * 1024, 64 * 1024));
+        assert!(cache.wants_above(64 * 1024 + 1, 64 * 1024));
+        // A fetch priced down to 4 KB leaves the 10 KB payload truncated.
+        assert!(cache.wants_above(10_000, 4_096));
+        // Nothing inline: the cache's own floor decides.
+        assert!(cache.wants_above(10_000, 0));
+        assert!(!cache.wants_above(100, 0));
+        // Off means off.
+        cache.set_max_bytes(0);
+        assert!(!cache.wants_above(1_000_000, 0));
+    }
+
+    #[test]
+    fn a_taken_buffer_is_empty_and_has_the_room_asked_for() {
+        let cache = MessageCache::default();
+        let buffer = cache.take_buffer(10_000);
+        assert!(buffer.is_empty());
+        assert!(buffer.capacity() >= 10_000);
+    }
+
+    #[test]
+    fn a_finished_stores_buffer_is_reused_by_the_next_take() {
+        let cache = MessageCache::default();
+        let mut buffer = cache.take_buffer(50_000);
+        buffer.extend_from_slice(&noise(50_000, 1));
+        let pointer = buffer.as_ptr();
+        cache.store_now(
+            key(1),
+            CachedMessage {
+                timestamp_ms: None,
+                key: None,
+                headers: Vec::new(),
+                payload: buffer,
+            },
+        );
+        assert!(cache.pooled_bytes() >= 50_000, "{}", cache.pooled_bytes());
+
+        let again = cache.take_buffer(40_000);
+        assert_eq!(again.as_ptr(), pointer, "the same allocation came back");
+        assert!(again.is_empty());
+        assert_eq!(cache.pooled_bytes(), 0);
+        // And what was cached is intact, not the recycled bytes.
+        assert_eq!(cache.get(&key(1)).unwrap().payload, noise(50_000, 1));
+    }
+
+    #[test]
+    fn the_pool_is_bounded_and_refuses_what_would_overfill_it() {
+        let cache = MessageCache::new(CacheConfig {
+            max_pooled_bytes: 100_000,
+            ..CacheConfig::default()
+        });
+        for i in 0..10 {
+            cache.store_now(
+                key(i),
+                CachedMessage {
+                    timestamp_ms: None,
+                    key: None,
+                    headers: Vec::new(),
+                    payload: noise(40_000, i as u32),
+                },
+            );
+        }
+        assert!(cache.pooled_bytes() <= 100_000, "{}", cache.pooled_bytes());
+        // A buffer over half the pool is not kept at all.
+        let cache = MessageCache::new(CacheConfig {
+            max_pooled_bytes: 100_000,
+            ..CacheConfig::default()
+        });
+        cache.store_now(
+            key(1),
+            CachedMessage {
+                timestamp_ms: None,
+                key: None,
+                headers: Vec::new(),
+                payload: noise(60_000, 1),
+            },
+        );
+        assert_eq!(cache.pooled_bytes(), 0);
+    }
+
+    #[test]
+    fn clearing_the_cache_drops_the_idle_buffers() {
+        let cache = MessageCache::default();
+        cache.store_now(key(1), message(50_000));
+        assert!(cache.pooled_bytes() > 0);
+        cache.clear();
+        assert_eq!(cache.pooled_bytes(), 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
