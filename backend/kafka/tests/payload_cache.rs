@@ -213,10 +213,17 @@ async fn a_miss_goes_to_the_broker_and_fills_the_cache_and_release_empties_it() 
         cold.messages[0], warm.messages[0],
         "a hit must equal what the broker said"
     );
+<<<<<<< HEAD
     // The two times are printed above, not compared: on a loopback broker the
     // whole gap is a few milliseconds and an instrumented CI runner can invert
     // it, which would fail the build for noise. What proves the cache served
     // the second open is the hit counter, which timing cannot fake.
+=======
+    assert!(
+        warm_elapsed < cold_elapsed,
+        "serving from the cache ({warm_elapsed:?}) should beat the broker ({cold_elapsed:?})"
+    );
+>>>>>>> origin/main
 
     // Releasing the connection forgets everything cached for it.
     cold_client.release(&connection.id);

@@ -1,7 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Salty",
+<<<<<<< HEAD
   "version": "1.16.2",
+=======
+  "version": "1.16.1",
+>>>>>>> origin/main
   "identifier": "dev.salty.app",
   "build": {
     "beforeDevCommand": { "script": "npm run dev", "cwd": "../frontend" },

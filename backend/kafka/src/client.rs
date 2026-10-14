@@ -2303,6 +2303,7 @@ impl KafkaClient for RdKafkaClient {
                             headers: extract_headers(&borrowed),
                         };
                         // The whole payload, which the row above is about to
+<<<<<<< HEAD
                         // be cut down from. The size check comes first and on
                         // its own: building the key allocates two strings, and
                         // a fetch of 30,000 one-kilobyte messages would pay
@@ -2331,6 +2332,31 @@ impl KafkaClient for RdKafkaClient {
                                 },
                             );
                         }
+=======
+                        // be cut down from. The closure is what copies it, and
+                        // the cache only calls it once a compression slot is
+                        // free — and not at all for a payload the grid already
+                        // holds or one cached unchanged.
+                        payload_cache.store_in_background(
+                            &runtime,
+                            salty_cache::MessageKey::new(
+                                &connection_id,
+                                &topic,
+                                partition,
+                                borrowed.offset(),
+                            ),
+                            payload.len(),
+                            message.timestamp_ms,
+                            || {
+                                crate::payload_cache::to_cached(
+                                    message.timestamp_ms,
+                                    borrowed.key(),
+                                    &message.headers,
+                                    payload,
+                                )
+                            },
+                        );
+>>>>>>> origin/main
                         if let Some(sender) = &on_message {
                             let _ = sender.send(message.clone());
                         }
