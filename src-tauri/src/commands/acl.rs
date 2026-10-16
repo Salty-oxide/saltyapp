@@ -7,7 +7,8 @@
 //! without leaving anything untested — see the Conventions in CLAUDE.md.
 
 use super::connections::{
-    connection_for_request, log_broker_call, record_auth_success_only, CommandError,
+    cached_result_reached_broker, connection_for_request, log_broker_call,
+    record_auth_success_only, unix_now_ms, CommandError,
 };
 use crate::state::AppState;
 use salty_core::{
@@ -101,4 +102,81 @@ pub async fn acl_for_resource(
         _ => &AclOperation::TOPIC_COLUMNS,
     };
     Ok(resource_access(result?, operations))
+}
+
+/// `acl_list` through the backend's 24 h metadata cache; `refresh` re-reads.
+/// Returns when the broker was asked alongside the listing.
+#[tauri::command]
+pub async fn acl_cached_list(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<AclListing>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_acl_listing(&connection, refresh, Duration::from_millis(read_timeout_ms))
+        .await;
+    // Success-only, as in `acl_list`; and a cache hit says nothing at all.
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_success_only(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing ACLs",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// `acl_for_resource` through the backend's 24 h metadata cache. The *listing*
+/// is what is cached; the per-principal verdict is derived from it on every
+/// call, so the rules have one implementation (`salty_core::resource_access`).
+#[tauri::command]
+pub async fn acl_cached_for_resource(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    resource_type: ResourceType,
+    resource_name: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<ResourceAccess>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_resource_acl_listing(
+            &connection,
+            resource_type,
+            &resource_name,
+            refresh,
+            Duration::from_millis(read_timeout_ms),
+        )
+        .await;
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_success_only(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing ACLs for resource",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+
+    let operations: &[AclOperation] = match resource_type {
+        ResourceType::Group => &AclOperation::GROUP_COLUMNS,
+        _ => &AclOperation::TOPIC_COLUMNS,
+    };
+    let cached = result?;
+    Ok(salty_core::Cached {
+        value: resource_access(cached.value, operations),
+        fetched_at_ms: cached.fetched_at_ms,
+    })
 }

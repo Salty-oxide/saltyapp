@@ -1,8 +1,10 @@
+import { useCallback, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AclResourceAccess,
   AclResourceType,
   api,
+  Cached,
   ConsumerGroupLag,
   MessageFetchResult,
   MessageFilter,
@@ -12,84 +14,68 @@ import {
 import { NonRetryableQueryError } from "../../lib/queryRetry";
 
 /**
- * How long a per-topic partition listing stays fresh.
+ * Every read of cluster data — the listings, ACLs, partitions and topic
+ * config — is cached by the backend (`salty_kafka::metadata_cache`, 24 h,
+ * purged when the session ends) and reached through the `connection_cached_*`
+ * commands. There is deliberately **no TTL here**: a remount or window focus is
+ * an IPC call the backend answers from memory, so React Query's `staleTime`
+ * stays at its default and nothing needs to be held for "a while".
  *
- * Unlike the three cluster listings below, this one is genuinely
- * time-sensitive — a partition's low/high watermarks move with every
- * produce, so cached offsets go wrong quickly in a way a topic *name* never
- * does. A short stale window is the right trade here; "fetch once and leave
- * it" is not.
+ * `refresh()` is the only way to reach the broker again: it makes the next
+ * read send `refresh: true`, which replaces the backend's entry. It rides
+ * `refetch`, so loading and error state behave as for any read.
+ *
+ * `retry: false` — a listing that failed is shown as failed rather than
+ * quietly dialling a broker that is already not answering.
  */
-export const PARTITION_LISTING_STALE_MS = 60_000;
+function useBackendCached<T>(
+  queryKey: readonly unknown[],
+  read: (refresh: boolean) => Promise<Cached<T>>,
+  enabled: boolean,
+) {
+  const force = useRef(false);
+  const query = useQuery({
+    queryKey,
+    queryFn: () => {
+      const refresh = force.current;
+      force.current = false;
+      return read(refresh);
+    },
+    enabled,
+    retry: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(async () => {
+    force.current = true;
+    try {
+      await refetch();
+    } finally {
+      // `refetch` cancels a read already in flight and starts its own, so the
+      // flag is consumed by this call's `queryFn`; this only clears it if the
+      // refetch never reached `queryFn` (the query was removed meanwhile).
+      force.current = false;
+    }
+  }, [refetch]);
+  return { ...query, data: query.data?.value, fetchedAtMs: query.data?.fetchedAtMs, refresh };
+}
 
-/**
- * Shared policy for the three cluster listings (brokers, topics, consumer
- * groups).
- *
- * Each is a full metadata request on the broker — `fetch_metadata` for
- * topics and brokers, a group listing for consumers — and each costs a fresh
- * Kafka client, a socket, and on a secured cluster a TLS and SASL handshake.
- *
- * These used to carry a 60-second stale window, which sounds conservative
- * and isn't: React Query refetches a *stale* query whenever an observer
- * mounts or the window regains focus, and this app remounts the tree on
- * every top-level tab switch and wires Tauri's real OS-level focus event
- * into `focusManager` (see App.tsx). On a desktop app that gets alt-tabbed
- * all day, that meant the broker was re-asked for the entire topic list over
- * and over, indefinitely, long after it had been fetched successfully — the
- * app looked like it was polling the cluster on a timer.
- *
- * So: fetch once, then hold it. `staleTime: Infinity` is the single lever
- * that does this — mount, focus and reconnect refetches all only apply to
- * stale queries. Refreshing is left to the user, who gets a new call by
- * expanding the category (`onExpand` in `ClusterResourceTree`), and to the
- * explicit invalidation that already follows connect/disconnect.
- *
- * `retry: false` for the same reason, overriding the app-wide `shouldRetry`:
- * a listing that failed is shown as failed rather than quietly dialling a
- * broker that is already not answering.
- */
-const CLUSTER_LISTING_OPTIONS = {
-  staleTime: Infinity,
-  // `staleTime` alone isn't enough: the tree unmounts on every top-level tab
-  // switch, and a query with no observers is garbage-collected after
-  // `gcTime` (5 minutes by default). Coming back to a tab after a coffee
-  // therefore found an empty cache and re-asked the broker — "fetched once"
-  // has to survive the tree not being on screen. Freshness on reconnect is
-  // handled by invalidating these on connect (see `useConnect`), not by
-  // letting the cache lapse.
-  gcTime: Infinity,
-  retry: false,
-} as const;
-
-/** Backs the tree's "Brokers" sub-list. Fetched once when the cluster connects; expanding the category refetches — see `CLUSTER_LISTING_OPTIONS`. */
+/** Backs the tree's "Brokers" sub-list. */
 export function useBrokers(connectionId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["brokers", connectionId],
-    queryFn: () => api.listBrokers(connectionId),
-    enabled,
-    ...CLUSTER_LISTING_OPTIONS,
-  });
+  return useBackendCached(["brokers", connectionId], (refresh) => api.cachedBrokers(connectionId, refresh), enabled);
 }
 
-/** Backs the tree's "Topics" sub-list. Fetched once when the cluster connects; expanding the category refetches — see `CLUSTER_LISTING_OPTIONS`. */
+/** Backs the tree's "Topics" sub-list. */
 export function useTopics(connectionId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["topics", connectionId],
-    queryFn: () => api.listTopics(connectionId),
-    enabled,
-    ...CLUSTER_LISTING_OPTIONS,
-  });
+  return useBackendCached(["topics", connectionId], (refresh) => api.cachedTopics(connectionId, refresh), enabled);
 }
 
-/** Backs the tree's "Consumers" sub-list. Fetched once when the cluster connects; expanding the category refetches — see `CLUSTER_LISTING_OPTIONS`. */
+/** Backs the tree's "Consumers" sub-list. */
 export function useConsumerGroups(connectionId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["consumer-groups", connectionId],
-    queryFn: () => api.listConsumerGroups(connectionId),
+  return useBackendCached(
+    ["consumer-groups", connectionId],
+    (refresh) => api.cachedConsumerGroups(connectionId, refresh),
     enabled,
-    ...CLUSTER_LISTING_OPTIONS,
-  });
+  );
 }
 
 /**
@@ -102,12 +88,7 @@ export function useConsumerGroups(connectionId: string, enabled: boolean) {
  * never open, is work nobody asked for.
  */
 export function useAcls(connectionId: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["acls", connectionId],
-    queryFn: () => api.listAcls(connectionId),
-    enabled,
-    ...CLUSTER_LISTING_OPTIONS,
-  });
+  return useBackendCached(["acls", connectionId], (refresh) => api.cachedAcls(connectionId, refresh), enabled);
 }
 
 /**
@@ -124,12 +105,11 @@ export function useResourceAcls(
   resourceName: string,
   enabled: boolean,
 ) {
-  return useQuery<AclResourceAccess>({
-    queryKey: ["acls", connectionId, resourceType, resourceName],
-    queryFn: () => api.aclsForResource(connectionId, resourceType, resourceName),
+  return useBackendCached(
+    ["acls", connectionId, resourceType, resourceName],
+    (refresh) => api.cachedAclsForResource(connectionId, resourceType, resourceName, refresh),
     enabled,
-    ...CLUSTER_LISTING_OPTIONS,
-  });
+  );
 }
 
 /** Backs the topic detail panel's Properties > Messages "Refresh" button. */
@@ -286,14 +266,17 @@ async function fetchFullPayload(
   }
 }
 
-/** Backs the topic detail panel's Partitions tab, and the sidebar tree's per-topic partition expand. */
+/**
+ * Backs the topic detail panel's Partitions tab, the Metrics skew view, and the
+ * sidebar tree's per-topic partition expand. Backend-cached — see
+ * `useBackendCached`; `fetchedAtMs` is when the broker was last asked.
+ */
 export function usePartitions(connectionId: string, topic: string, enabled: boolean = true) {
-  return useQuery({
-    queryKey: ["partitions", connectionId, topic],
-    queryFn: () => api.listPartitions(connectionId, topic),
+  return useBackendCached(
+    ["partitions", connectionId, topic],
+    (refresh) => api.cachedPartitions(connectionId, topic, refresh),
     enabled,
-    staleTime: PARTITION_LISTING_STALE_MS,
-  });
+  );
 }
 
 /**
@@ -317,12 +300,13 @@ export function usePartitionMessageCounts(
   });
 }
 
-/** Backs the topic detail panel's Config tab. */
+/** Backs the topic detail panel's Config tab. Backend-cached — see `useBackendCached`. */
 export function useTopicConfig(connectionId: string, topic: string) {
-  return useQuery({
-    queryKey: ["topic-config", connectionId, topic],
-    queryFn: () => api.describeTopicConfig(connectionId, topic),
-  });
+  return useBackendCached(
+    ["topic-config", connectionId, topic],
+    (refresh) => api.cachedTopicConfig(connectionId, topic, refresh),
+    true,
+  );
 }
 
 /** Backs the consumer group detail panel's "Refresh" button. */

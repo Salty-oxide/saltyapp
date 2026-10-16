@@ -7,7 +7,6 @@ import { useDataTabGridStateStore } from "./useDataTabGridStateStore";
 import { useLagHistoryStore } from "./useLagHistoryStore";
 import { stopSamplingForConnection } from "./topicRateSampler";
 import { useTopicRateStore } from "./useTopicRateStore";
-import { forgetClusterHealth } from "./clusterHealthCache";
 import { usePublishDraftStore } from "./usePublishDraftStore";
 import { useKsqlStore } from "../ksql/useKsqlStore";
 import { useTreeUiStore } from "./useTreeUiStore";
@@ -105,9 +104,6 @@ export function clearConnectionState(queryClient: QueryClient, connectionId: str
   // it, which would otherwise keep asking a cluster that has no session.
   stopSamplingForConnection(connectionId);
   useTopicRateStore.getState().clearForConnection(connectionId);
-
-  // The cluster Metrics tab's last analysis.
-  forgetClusterHealth(connectionId);
 
   // And every ksqlDB workspace for this cluster: the editor's text, and the
   // rows a query left behind. A running query is already stopped by the

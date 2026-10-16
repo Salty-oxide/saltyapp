@@ -113,4 +113,25 @@ describe("loadClusterHealth", () => {
     await expect(loadClusterHealth("1", { signal: controller.signal })).rejects.toThrow(/cancel/i);
     expect(partitions.mock.calls.length).toBeLessThan(50);
   });
+
+  it("reads partitions and config through the backend cache, passing refresh on through", async () => {
+    const cachedPartitions = vi.fn(() => ({ value: [part(0)], fetchedAtMs: 500 }));
+    const cachedConfig = vi.fn(() => ({ value: [], fetchedAtMs: 300 }));
+    setInvokeHandlers({
+      connection_list_brokers: () => brokers,
+      connection_list_topics: () => [{ name: "t", partitionCount: 1 }],
+      connection_cached_partitions: cachedPartitions,
+      connection_cached_topic_config: cachedConfig,
+    });
+
+    const cold = await loadClusterHealth("1", {});
+    expect(cachedPartitions).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
+    expect(cachedConfig).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
+    // The oldest figure behind the analysis, so "read at" is never flattering.
+    expect(cold.oldestFetchedAtMs).toBe(300);
+
+    await loadClusterHealth("1", { refresh: true });
+    expect(cachedPartitions).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true }));
+    expect(cachedConfig).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true }));
+  });
 });

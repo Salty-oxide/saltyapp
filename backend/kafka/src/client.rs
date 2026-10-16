@@ -12,13 +12,13 @@ use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::{ClientConfig, Message};
 use salty_core::Result;
 use salty_core::{
-    AclAvailability, AclFilter, AclListing, AppError, BrokerSummary, ClusterVersionReport,
+    AclAvailability, AclFilter, AclListing, AppError, BrokerSummary, Cached, ClusterVersionReport,
     ConfigEntry, Connection, ConnectionStatus, ConsumerGroupLag, ConsumerGroupSummary,
     EncodedRecord, INTER_BROKER_PROTOCOL_VERSION_CONFIG, LIVENESS_GRACE_MS, LivenessTracker,
     MessageFetchResult, MessageFilter, MessageHeader, PROCESS_ROLES_CONFIG, PartitionLag,
-    PartitionMessageCount, PartitionSummary, PublishOutcome, STATS_INTERVAL_MS, SaslMechanism,
-    SecurityProtocol, TopicMessage, TopicSummary, broker_state_is_up, cluster_version_report,
-    messages_in_range,
+    PartitionMessageCount, PartitionSummary, PublishOutcome, ResourceType, STATS_INTERVAL_MS,
+    SaslMechanism, SecurityProtocol, TopicMessage, TopicSummary, broker_state_is_up,
+    cluster_version_report, messages_in_range,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -308,6 +308,133 @@ pub trait KafkaClient: Send + Sync {
         read_timeout: Duration,
     ) -> Result<Vec<PartitionSummary>, AppError>;
 
+    /// [`list_partitions`](Self::list_partitions) through the 24 h metadata
+    /// cache: served from it unless `refresh`, and a successful read always
+    /// replaces the entry. The result says when the broker was asked.
+    ///
+    /// For the views that are a snapshot (Metrics, the Partitions tab). The
+    /// rate sampler needs live watermarks and keeps calling `list_partitions`.
+    /// The default has no cache and reads every time.
+    async fn cached_partitions(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<PartitionSummary>>, AppError> {
+        let value = self
+            .list_partitions(connection, topic, read_timeout)
+            .await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// [`describe_topic_config`](Self::describe_topic_config) through the 24 h
+    /// metadata cache — see [`cached_partitions`](Self::cached_partitions).
+    async fn cached_topic_config(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<ConfigEntry>>, AppError> {
+        let value = self
+            .describe_topic_config(connection, topic, read_timeout)
+            .await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// [`list_brokers`](Self::list_brokers) through the 24 h metadata cache —
+    /// see [`cached_partitions`](Self::cached_partitions).
+    async fn cached_brokers(
+        &self,
+        connection: &Connection,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<BrokerSummary>>, AppError> {
+        let value = self.list_brokers(connection, read_timeout).await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// [`list_topics`](Self::list_topics) through the 24 h metadata cache.
+    async fn cached_topics(
+        &self,
+        connection: &Connection,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<TopicSummary>>, AppError> {
+        let value = self.list_topics(connection, read_timeout).await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// [`list_consumer_groups`](Self::list_consumer_groups) through the 24 h
+    /// metadata cache. The rate sampler keeps the live call: a group's state
+    /// is what it reads.
+    async fn cached_consumer_groups(
+        &self,
+        connection: &Connection,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<ConsumerGroupSummary>>, AppError> {
+        let value = self.list_consumer_groups(connection, read_timeout).await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// The cluster-wide ACL listing through the 24 h metadata cache. Only a
+    /// successful `describe_acls` is stored — a refusal that arrives as an
+    /// `AclListing` (no authorizer, not permitted) is a fact about the cluster
+    /// and is cached with the rest.
+    async fn cached_acl_listing(
+        &self,
+        connection: &Connection,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<AclListing>, AppError> {
+        let value = self
+            .describe_acls(connection, AclFilter::any(), read_timeout)
+            .await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
+    /// The ACLs governing one named resource, through the 24 h metadata cache.
+    async fn cached_resource_acl_listing(
+        &self,
+        connection: &Connection,
+        resource_type: ResourceType,
+        resource_name: &str,
+        _refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<AclListing>, AppError> {
+        let value = self
+            .describe_acls(
+                connection,
+                AclFilter::governing(resource_type, resource_name),
+                read_timeout,
+            )
+            .await?;
+        Ok(Cached {
+            value,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
     /// Backs the topic Metrics tab's partition-skew chart when a From/To
     /// window is set: how many messages each partition holds between the two
     /// times. Each bound is resolved to an offset with `offsets_for_times` —
@@ -513,6 +640,12 @@ impl Default for ClientErrorContext {
 
 /// Wall-clock milliseconds since the Unix epoch — the same scale as
 /// librdkafka's statistics `time` field, so both feed one tracker.
+/// The metadata cache's scope for one resource's governing ACLs. The type is
+/// part of it: a topic and a group may share a name.
+fn acl_resource_scope(resource_type: ResourceType, name: &str) -> String {
+    format!("{resource_type:?}:{name}")
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -926,6 +1059,10 @@ pub struct RdKafkaClient {
     /// row is a lookup rather than a broker round trip. One for the whole app,
     /// which is what makes it shared by every tab — see `salty_cache`.
     payload_cache: crate::payload_cache::PayloadCache,
+    /// Partition layouts and topic configs, served for 24 h unless a refresh
+    /// is asked for — what the Metrics views are built from. See
+    /// `crate::metadata_cache`.
+    metadata_cache: crate::metadata_cache::MetadataCache,
 }
 
 /// How long a pooled client may go unused before it is closed.
@@ -1154,6 +1291,11 @@ struct PooledAdminClient {
 impl RdKafkaClient {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The shared metadata cache, for tests and diagnostics.
+    pub fn metadata_cache(&self) -> &crate::metadata_cache::MetadataCache {
+        &self.metadata_cache
     }
 
     /// The shared payload cache, for tests and diagnostics.
@@ -1508,6 +1650,11 @@ impl KafkaClient for RdKafkaClient {
             .change_context(AppError::Kafka)
             .attach("connect task panicked")?;
 
+        // Connecting starts a session; what was cached under the last one is
+        // not known to still be true, and the tree reads its listings right
+        // after this returns.
+        self.metadata_cache.invalidate_connection(&connection.id);
+
         if result.is_err() {
             self.drop_pooled_client(&connection.id);
         }
@@ -1528,6 +1675,152 @@ impl KafkaClient for RdKafkaClient {
         // cache answers without asking the broker, so it must not outlive the
         // session it was filled in.
         self.payload_cache.0.invalidate_connection(connection_id);
+        self.metadata_cache.invalidate_connection(connection_id);
+    }
+
+    async fn cached_partitions(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<PartitionSummary>>, AppError> {
+        if !refresh
+            && let Some(hit) = self
+                .metadata_cache
+                .partitions(&connection.id, topic, now_ms())
+        {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self
+            .list_partitions(connection, topic, read_timeout)
+            .await?;
+        Ok(self
+            .metadata_cache
+            .store_partitions(&connection.id, topic, value, now_ms(), session))
+    }
+
+    async fn cached_topic_config(
+        &self,
+        connection: &Connection,
+        topic: &str,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<ConfigEntry>>, AppError> {
+        if !refresh && let Some(hit) = self.metadata_cache.config(&connection.id, topic, now_ms()) {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self
+            .describe_topic_config(connection, topic, read_timeout)
+            .await?;
+        Ok(self
+            .metadata_cache
+            .store_config(&connection.id, topic, value, now_ms(), session))
+    }
+
+    async fn cached_brokers(
+        &self,
+        connection: &Connection,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<BrokerSummary>>, AppError> {
+        if !refresh && let Some(hit) = self.metadata_cache.brokers(&connection.id, now_ms()) {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self.list_brokers(connection, read_timeout).await?;
+        Ok(self
+            .metadata_cache
+            .store_brokers(&connection.id, value, now_ms(), session))
+    }
+
+    async fn cached_topics(
+        &self,
+        connection: &Connection,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<TopicSummary>>, AppError> {
+        if !refresh && let Some(hit) = self.metadata_cache.topics(&connection.id, now_ms()) {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self.list_topics(connection, read_timeout).await?;
+        Ok(self
+            .metadata_cache
+            .store_topics(&connection.id, value, now_ms(), session))
+    }
+
+    async fn cached_consumer_groups(
+        &self,
+        connection: &Connection,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<Vec<ConsumerGroupSummary>>, AppError> {
+        if !refresh
+            && let Some(hit) = self
+                .metadata_cache
+                .consumer_groups(&connection.id, now_ms())
+        {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self.list_consumer_groups(connection, read_timeout).await?;
+        Ok(self
+            .metadata_cache
+            .store_consumer_groups(&connection.id, value, now_ms(), session))
+    }
+
+    async fn cached_acl_listing(
+        &self,
+        connection: &Connection,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<AclListing>, AppError> {
+        if !refresh && let Some(hit) = self.metadata_cache.acls(&connection.id, now_ms()) {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self
+            .describe_acls(connection, AclFilter::any(), read_timeout)
+            .await?;
+        Ok(self
+            .metadata_cache
+            .store_acls(&connection.id, value, now_ms(), session))
+    }
+
+    async fn cached_resource_acl_listing(
+        &self,
+        connection: &Connection,
+        resource_type: ResourceType,
+        resource_name: &str,
+        refresh: bool,
+        read_timeout: Duration,
+    ) -> Result<Cached<AclListing>, AppError> {
+        let scope = acl_resource_scope(resource_type, resource_name);
+        if !refresh
+            && let Some(hit) = self
+                .metadata_cache
+                .resource_acls(&connection.id, &scope, now_ms())
+        {
+            return Ok(hit);
+        }
+        let session = self.metadata_cache.session(&connection.id);
+        let value = self
+            .describe_acls(
+                connection,
+                AclFilter::governing(resource_type, resource_name),
+                read_timeout,
+            )
+            .await?;
+        Ok(self.metadata_cache.store_resource_acls(
+            &connection.id,
+            &scope,
+            value,
+            now_ms(),
+            session,
+        ))
     }
 
     /// Probes every bootstrap server **at once** and answers with the first
@@ -4529,6 +4822,238 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(rx.recv().await.is_none());
+    }
+
+    /// Mirrors the payload cache's whole point: a cached listing is served
+    /// with no broker involved (this connection points at a closed port).
+    #[tokio::test]
+    async fn cached_cluster_listings_are_served_without_touching_the_broker() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let cache = client.metadata_cache();
+        let brokers = cache.store_brokers(
+            &connection.id,
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+        let topics = cache.store_topics(
+            &connection.id,
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+        let groups = cache.store_consumer_groups(
+            &connection.id,
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        assert_eq!(
+            client
+                .cached_brokers(&connection, false, TEST_READ_TIMEOUT)
+                .await
+                .unwrap(),
+            brokers
+        );
+        assert_eq!(
+            client
+                .cached_topics(&connection, false, TEST_READ_TIMEOUT)
+                .await
+                .unwrap(),
+            topics
+        );
+        assert_eq!(
+            client
+                .cached_consumer_groups(&connection, false, TEST_READ_TIMEOUT)
+                .await
+                .unwrap(),
+            groups
+        );
+    }
+
+    #[tokio::test]
+    async fn refreshing_a_cluster_listing_goes_to_the_broker_even_when_cached() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        client.metadata_cache().store_topics(
+            &connection.id,
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        let result = client
+            .cached_topics(&connection, true, TEST_READ_TIMEOUT)
+            .await;
+
+        assert!(result.is_err(), "refresh must not be answered from cache");
+    }
+
+    #[tokio::test]
+    async fn cached_acl_listings_are_served_without_touching_the_broker() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let all = client.metadata_cache().store_acls(
+            &connection.id,
+            salty_core::AclListing::no_authorizer(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+        let one = client.metadata_cache().store_resource_acls(
+            &connection.id,
+            &acl_resource_scope(salty_core::ResourceType::Topic, "orders"),
+            salty_core::AclListing::no_authorizer(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        assert_eq!(
+            client
+                .cached_acl_listing(&connection, false, TEST_READ_TIMEOUT)
+                .await
+                .unwrap(),
+            all
+        );
+        assert_eq!(
+            client
+                .cached_resource_acl_listing(
+                    &connection,
+                    salty_core::ResourceType::Topic,
+                    "orders",
+                    false,
+                    TEST_READ_TIMEOUT,
+                )
+                .await
+                .unwrap(),
+            one
+        );
+        // A different resource of the same name is a different question.
+        assert!(
+            client
+                .cached_resource_acl_listing(
+                    &connection,
+                    salty_core::ResourceType::Group,
+                    "orders",
+                    false,
+                    TEST_READ_TIMEOUT,
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_connect_still_leaves_no_stale_listing_behind() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        client.metadata_cache().store_topics(
+            &connection.id,
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        let _ = client.connect(&connection).await;
+
+        assert!(client.metadata_cache().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cached_partitions_are_served_without_touching_the_broker() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let stored = client.metadata_cache().store_partitions(
+            &connection.id,
+            "orders",
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        let hit = client
+            .cached_partitions(&connection, "orders", false, TEST_READ_TIMEOUT)
+            .await
+            .expect("a cache hit needs no broker");
+
+        assert_eq!(hit, stored);
+    }
+
+    #[tokio::test]
+    async fn refreshing_partitions_goes_to_the_broker_even_when_cached() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        client.metadata_cache().store_partitions(
+            &connection.id,
+            "orders",
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        let result = client
+            .cached_partitions(&connection, "orders", true, TEST_READ_TIMEOUT)
+            .await;
+
+        assert!(result.is_err(), "refresh must not be answered from cache");
+    }
+
+    #[tokio::test]
+    async fn cached_topic_config_is_served_without_touching_the_broker() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        let stored = client.metadata_cache().store_config(
+            &connection.id,
+            "orders",
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        let hit = client
+            .cached_topic_config(&connection, "orders", false, TEST_READ_TIMEOUT)
+            .await
+            .expect("a cache hit needs no broker");
+
+        assert_eq!(hit, stored);
+    }
+
+    #[tokio::test]
+    async fn an_uncached_read_with_an_unreachable_broker_is_an_error_and_stores_nothing() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        assert!(
+            client
+                .cached_partitions(&connection, "orders", false, TEST_READ_TIMEOUT)
+                .await
+                .is_err()
+        );
+        assert!(client.metadata_cache().is_empty());
+    }
+
+    #[tokio::test]
+    async fn releasing_a_connection_empties_its_cached_metadata() {
+        let client = RdKafkaClient::new();
+        let connection = sample_connection();
+        client.metadata_cache().store_partitions(
+            &connection.id,
+            "orders",
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+        client.metadata_cache().store_config(
+            &connection.id,
+            "orders",
+            Vec::new(),
+            now_ms(),
+            crate::metadata_cache::Session::ANY,
+        );
+
+        client.release(&connection.id);
+
+        assert!(client.metadata_cache().is_empty());
     }
 
     #[tokio::test]

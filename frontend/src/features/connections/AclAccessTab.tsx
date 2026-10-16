@@ -2,6 +2,7 @@ import { AclOperationVerdict, AclResourceType } from "../../lib/tauri";
 import { AclAvailabilityNotice } from "./AclAvailabilityNotice";
 import { AclBindingsTable } from "./AclBindingsTable";
 import { operationLabel } from "./acl";
+import { RefreshBar } from "./RefreshBar";
 import { useResourceAcls, useTopics } from "./useClusterResources";
 
 export interface AclAccessTabProps {
@@ -68,12 +69,19 @@ export function AclAccessTab({ connectionId, resourceType, resourceName }: AclAc
   // currently covers, so no broker call is made for it here.
   const topics = useTopics(connectionId, true);
 
+  const bar = (
+    <RefreshBar fetchedAtMs={access.fetchedAtMs} refreshing={access.isFetching} onRefresh={() => void access.refresh()} />
+  );
+
   if (access.isLoading) return <p>Loading ACLs…</p>;
   if (access.error) {
     return (
-      <p role="alert" className="connection-modal-error">
-        ACLs could not be loaded. {access.error.message}
-      </p>
+      <>
+        {bar}
+        <p role="alert" className="connection-modal-error">
+          ACLs could not be loaded. {access.error.message}
+        </p>
+      </>
     );
   }
   if (!access.data) return null;
@@ -83,6 +91,7 @@ export function AclAccessTab({ connectionId, resourceType, resourceName }: AclAc
 
   return (
     <div className="acl-access-tab">
+      {bar}
       <AclAvailabilityNotice availability={listing.availability} isEmpty={listing.bindings.length === 0} />
 
       {listing.bindingErrors.length > 0 && (

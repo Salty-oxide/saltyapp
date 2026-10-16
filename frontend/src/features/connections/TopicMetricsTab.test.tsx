@@ -222,3 +222,17 @@ describe("TopicMetricsTab sub-tabs", () => {
     expect(screen.queryByText("Messages per partition")).not.toBeInTheDocument();
   });
 });
+
+describe("TopicMetricsTab backend cache", () => {
+  it("shows when the partitions were read and refreshes through the backend only on Refresh", async () => {
+    const read = vi.fn(() => ({ value: [part(0, 10), part(1, 10)], fetchedAtMs: 1_700_000_000_000 }));
+    setInvokeHandlers({ connection_cached_partitions: read });
+    renderWithClient(<TopicMetricsTab connectionId="1" topicName="orders" />);
+    await screen.findByText("Messages per partition");
+    expect(screen.getByText(/Loaded at/)).toBeInTheDocument();
+    expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true })));
+  });
+});

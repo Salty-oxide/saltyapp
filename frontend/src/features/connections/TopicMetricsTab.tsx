@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { parseDate, validateDateStrings } from "./dataFilters";
 import { ChartCard, StatCard, statNumber, TOP_LIST_MIN, TOP_LIST_SIZE, TopList } from "./metricsChartStyle";
+import { RefreshBar } from "./RefreshBar";
 import { PartitionBarRows } from "./PartitionBarRows";
 import { computePartitionSkew, HIGH_SKEW, skewFromCounts } from "./partitionSkew";
 import { TopicRatesTab } from "./TopicRatesTab";
@@ -65,7 +66,7 @@ export function TopicMetricsTab({ connectionId, topicName }: TopicMetricsTabProp
 function PartitionSkewView({ connectionId, topicName }: TopicMetricsTabProps) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const { data: partitions, isLoading } = usePartitions(connectionId, topicName);
+  const { data: partitions, isLoading, isFetching, fetchedAtMs, refresh } = usePartitions(connectionId, topicName);
 
   const fromMs = parseDate(fromDate);
   const toMs = parseDate(toDate);
@@ -74,7 +75,15 @@ function PartitionSkewView({ connectionId, topicName }: TopicMetricsTabProps) {
   const counts = usePartitionMessageCounts(connectionId, topicName, fromMs, toMs, windowed && rangeError === null);
 
   if (isLoading) return <p>Loading metrics…</p>;
-  if (!partitions || partitions.length === 0) return <p>No partitions found for this topic.</p>;
+  const bar = <RefreshBar fetchedAtMs={fetchedAtMs} refreshing={isFetching} onRefresh={() => void refresh()} />;
+  if (!partitions || partitions.length === 0) {
+    return (
+      <div className="metrics-tab">
+        {bar}
+        <p>No partitions found for this topic.</p>
+      </div>
+    );
+  }
 
   const skew = windowed && counts.data ? skewFromCounts(counts.data) : computePartitionSkew(partitions);
   const windowError = rangeError ?? (counts.isError ? (counts.error instanceof Error ? counts.error.message : "Failed to count messages") : null);
@@ -89,6 +98,7 @@ function PartitionSkewView({ connectionId, topicName }: TopicMetricsTabProps) {
 
   return (
     <div className="metrics-tab">
+      {bar}
       <div className="metrics-window" role="group" aria-label="Time window">
         <label>
           From

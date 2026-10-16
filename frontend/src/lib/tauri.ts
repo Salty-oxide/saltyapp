@@ -211,6 +211,12 @@ export interface PartitionSummary {
   highOffset: number;
 }
 
+/** A backend-cached read, with when the broker was asked (epoch ms). */
+export interface Cached<T> {
+  value: T;
+  fetchedAtMs: number;
+}
+
 export interface PartitionMessageCount {
   partition: number;
   messages: number;
@@ -592,6 +598,63 @@ export const api = {
     invoke<PartitionSummary[]>("connection_list_partitions", {
       id,
       topic,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /**
+   * The cluster listings through the backend's 24 h metadata cache (see
+   * `salty_kafka::metadata_cache`); `refresh` skips it and re-reads. The
+   * un-prefixed `list*` calls stay live — the rate sampler needs them so.
+   */
+  cachedBrokers: (id: string, refresh = false) =>
+    invoke<Cached<BrokerSummary[]>>("connection_cached_brokers", {
+      id,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  cachedTopics: (id: string, refresh = false) =>
+    invoke<Cached<TopicSummary[]>>("connection_cached_topics", {
+      id,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  cachedConsumerGroups: (id: string, refresh = false) =>
+    invoke<Cached<ConsumerGroupSummary[]>>("connection_cached_consumer_groups", {
+      id,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  cachedAcls: (id: string, refresh = false) =>
+    invoke<Cached<AclListing>>("acl_cached_list", {
+      id,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  cachedAclsForResource: (id: string, resourceType: AclResourceType, resourceName: string, refresh = false) =>
+    invoke<Cached<AclResourceAccess>>("acl_cached_for_resource", {
+      id,
+      resourceType,
+      resourceName,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /**
+   * The partition listing through the backend's 24 h metadata cache (see
+   * `salty_kafka::metadata_cache`). `refresh` skips the cache and re-reads.
+   * `listPartitions` stays the live read, for the rate sampler.
+   */
+  cachedPartitions: (id: string, topic: string, refresh = false) =>
+    invoke<Cached<PartitionSummary[]>>("connection_cached_partitions", {
+      id,
+      topic,
+      refresh,
+      readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
+    }),
+  /** Topic config through the backend's 24 h metadata cache; `refresh` re-reads. */
+  cachedTopicConfig: (id: string, topic: string, refresh = false) =>
+    invoke<Cached<ConfigEntry[]>>("connection_cached_topic_config", {
+      id,
+      topic,
+      refresh,
       readTimeoutMs: useGeneralSettingsStore.getState().brokerReadTimeoutMs,
     }),
   /** Messages per partition between two times (either may be null for "from the start" / "to the end"), counted by offset distance. */

@@ -78,8 +78,8 @@ describe("ClusterResourceTree", () => {
     });
     renderWithClient(<ClusterResourceTree connectionId="1" />);
 
-    await waitFor(() => expect(listBrokers).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
-    await waitFor(() => expect(listTopics).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listBrokers).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listTopics).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
   });
 
   // Consumer groups are the odd one out: the listing is the most expensive of
@@ -101,7 +101,7 @@ describe("ClusterResourceTree", () => {
 
     await user.click(screen.getByTestId("category-Consumers"));
 
-    await waitFor(() => expect(listConsumerGroups).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listConsumerGroups).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
   });
 
   // The listings are held indefinitely once fetched, so re-opening a
@@ -165,7 +165,7 @@ describe("ClusterResourceTree", () => {
 
     await user.click(screen.getByTestId("category-Brokers"));
 
-    await waitFor(() => expect(listBrokers).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listBrokers).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
     expect(await screen.findByText("1 — broker1:9092")).toBeInTheDocument();
   });
 
@@ -193,8 +193,22 @@ describe("ClusterResourceTree", () => {
 
     await user.click(screen.getByTestId("category-Topics"));
 
-    await waitFor(() => expect(listTopics).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listTopics).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
     expect(await screen.findByText("orders")).toBeInTheDocument();
+  });
+
+  // The listing is cached by the backend for 24 h; opening the category is how
+  // the user asks for a fresh one, so that read must skip the cache.
+  it("re-reads Topics from the broker (refresh) when the category is expanded", async () => {
+    const listTopics = vi.fn(() => [{ name: "orders", partitionCount: 3 }]);
+    setInvokeHandlers({ connection_list_topics: listTopics });
+    const user = userEvent.setup();
+    renderWithClient(<ClusterResourceTree connectionId="1" />);
+    await waitFor(() => expect(listTopics).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
+
+    await user.click(screen.getByTestId("category-Topics"));
+
+    await waitFor(() => expect(listTopics).toHaveBeenLastCalledWith({ id: "1", refresh: true, readTimeoutMs: 10_000 }));
   });
 
   it("keeps the topic search box in its own sticky band, outside the list it filters", async () => {
@@ -397,7 +411,7 @@ describe("ClusterResourceTree", () => {
 
     await user.click(screen.getByTestId("category-Consumers"));
 
-    await waitFor(() => expect(listGroups).toHaveBeenCalledWith({ id: "1", readTimeoutMs: 10_000 }));
+    await waitFor(() => expect(listGroups).toHaveBeenCalledWith({ id: "1", refresh: false, readTimeoutMs: 10_000 }));
     expect(await screen.findByText("billing")).toBeInTheDocument();
   });
 

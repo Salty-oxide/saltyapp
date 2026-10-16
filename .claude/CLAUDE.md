@@ -376,10 +376,32 @@ npm run coverage           # both LCOV reports into coverage/, for SonarQube
   buckets for 30 days; a restart starts empty, so 7d/30d show only what was
   observed.
 - **The cluster Metrics tab reads every topic's partitions and config when it
-  is opened, and reuses the last analysis for 60 s.** That is two broker calls
-  per topic at 6 in parallel with a progress bar, never in the background;
-  Refresh always re-reads, and the result is dropped with the cluster's other
-  contents on disconnect. Definitions (`clusterHealth.ts`, all pure): a topic
+  is opened.** That is two broker calls per topic at 6 in parallel with a
+  progress bar, never in the background; Refresh always re-reads, and nothing is
+  held on the frontend. **All cluster data is cached in Rust, for 24 h**:
+  `salty_kafka::metadata_cache` holds the broker / topic / consumer group
+  listings, the ACL listings (cluster-wide and per resource), and per-topic
+  partition layout and config — keyed by connection, successful reads only, on
+  `RdKafkaClient`, purged by `release()` and by `connect()`. A read takes a
+  `Session` (`cache.session(id)`) *before* asking the broker and the store is
+  dropped if the connection was purged meanwhile — otherwise a read in flight
+  across Disconnect / an edit lands after the purge and serves the old cluster
+  for the whole TTL. `backend/kafka/tests/metadata_cache.rs` is the e2e check.
+  They are reached
+  through the `connection_cached_*` / `acl_cached_*` commands, which take
+  `refresh` and return `Cached { value, fetchedAtMs }`; the frontend's single
+  `useBackendCached` hook has **no TTL of its own** and `refresh()` (the Refresh
+  buttons — including the topic/group Access tab, since permissions must not
+  silently age — and expanding a tree category) is the only way past the cache. The
+  live `connection_list_*` / `describe_topic_config` stay uncached on purpose:
+  the rate sampler needs current watermarks and group states. Three things
+  hang off "a successful query is not proof the broker answered": a cache hit
+  must not feed the auth circuit breaker (`cached_result_reached_broker`), and
+  `hasRecentClusterSuccess` reads `fetchedAtMs`, not `dataUpdatedAt`, or the
+  status poll would be skipped — a dead cluster looking alive — for as long as
+  the cache holds. The health *analysis* (`analyzeTopic`, scores) is computed
+  from that data on the frontend each time; it is arithmetic, not a cache.
+  Definitions (`clusterHealth.ts`, all pure): a topic
   is *critical* below `min.insync.replicas`, *high* when under-replicated,
   *elevated* with no redundancy to spare (RF 1, or min ISR = RF), else *low*;
   leader spread is the most leaders on one broker over the even share

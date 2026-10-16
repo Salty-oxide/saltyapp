@@ -10,6 +10,8 @@ import { dataTabCacheKey, useTabDataStore } from "./features/workspace/useTabDat
 import { useTreeUiStore } from "./features/connections/useTreeUiStore";
 import { sampleNewConnection } from "./features/connections/connectionTestFixtures";
 
+import { mockInvokeWith } from "./lib/testInvoke";
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 const save = vi.fn();
@@ -44,7 +46,7 @@ beforeEach(() => {
 describe("App", () => {
   it("renders the shell with tab bar, sidebar, and bottom panel", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -59,7 +61,7 @@ describe("App", () => {
 
   it("opens the New Connection modal when the sidebar button is clicked", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -85,7 +87,7 @@ describe("App", () => {
       updatedAt: "2026-08-22T00:00:00Z",
     };
     let listedConnections: unknown[] = [];
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve(listedConnections);
       if (command === "connection_create") {
@@ -124,7 +126,7 @@ describe("App", () => {
       updatedAt: "2026-08-22T00:00:00Z",
     };
     let listedConnections: unknown[] = [];
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve(listedConnections);
       if (command === "connection_create") {
@@ -162,7 +164,7 @@ describe("App", () => {
     // A connect that never settles — what a broker rejecting the typed
     // credentials looks like from here for the ~10s the probe takes. The
     // modal must not sit open (and unclosable) for the whole of it.
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve(listedConnections);
       if (command === "connection_create") {
@@ -191,7 +193,7 @@ describe("App", () => {
 
   it("keeps the modal open, with the failure shown, when saving the connection itself fails", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       if (command === "connection_create") return Promise.reject(new Error("a connection named Local Kafka already exists"));
@@ -213,7 +215,7 @@ describe("App", () => {
 
   it("exports every connection when Export All is clicked", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       if (command === "connections_export") return Promise.resolve(undefined);
@@ -243,7 +245,7 @@ describe("App", () => {
 
   it("does not export when the Export All save dialog is cancelled", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -262,7 +264,7 @@ describe("App", () => {
 
   it("imports connections and shows a summary alert when Import is clicked", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       if (command === "connections_import") return Promise.resolve({ imported: 2, skipped: 1 });
@@ -285,7 +287,7 @@ describe("App", () => {
 
   it("does not import when the Import open dialog is cancelled", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -304,7 +306,7 @@ describe("App", () => {
 
   it("opens the Settings panel via the gear icon and shows a closable Settings tab", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -327,7 +329,7 @@ describe("App", () => {
 
   it("keeps Settings open (like a JSON viewer tab) when switching away, and reactivates it when its pill is clicked again", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") return Promise.resolve({ id: "tab-1", name: "Tab 1" });
       if (command === "connection_list") return Promise.resolve([]);
@@ -355,7 +357,7 @@ describe("App", () => {
 
   it("does not render the right pane until a message is selected", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -369,7 +371,7 @@ describe("App", () => {
 
   it("hides the left sidebar while a JSON/XML viewer tab is active, and restores it when switching away", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -391,7 +393,7 @@ describe("App", () => {
 
   it("keeps the connection tree's expanded state when switching to a JSON tab and back", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([{ id: "1", name: "Local Kafka" }]);
       if (command === "connection_check_status") return Promise.resolve("REACHABLE");
@@ -421,7 +423,7 @@ describe("App", () => {
   it("clears the middle pane's selection and the tree's highlighted row when a new tab is opened", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     let nextTabId = 1;
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    mockInvokeWith((command: string, args?: unknown) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") {
         const id = `tab-${nextTabId++}`;
@@ -464,7 +466,7 @@ describe("App", () => {
   it("resets the tree's expanded state when switching to a different real tab (unlike a JSON tab excursion, which keeps it)", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     let nextTabId = 1;
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    mockInvokeWith((command: string, args?: unknown) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") {
         const id = `tab-${nextTabId++}`;
@@ -494,7 +496,7 @@ describe("App", () => {
   it("preserves an already-visited tab's tree expand state when switching back to it, unlike a brand new tab", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     let nextTabId = 1;
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    mockInvokeWith((command: string, args?: unknown) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") {
         const id = `tab-${nextTabId++}`;
@@ -528,7 +530,7 @@ describe("App", () => {
   it("restores a tab's previously-selected item when switching back to it", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     let nextTabId = 1;
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    mockInvokeWith((command: string, args?: unknown) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") {
         const id = `tab-${nextTabId++}`;
@@ -572,7 +574,7 @@ describe("App", () => {
 
   it("wires Tauri's real OS window focus event into React Query's focusManager", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "connection_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command ${command}`));
@@ -593,7 +595,7 @@ describe("App", () => {
 
   it("closes the right pane when switching to a different topic in the sidebar while a message is viewed", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") return Promise.resolve({ id: "tab-1", name: "Tab 1" });
       if (command === "connection_list")
@@ -649,7 +651,7 @@ describe("App", () => {
 
   it("closes the right pane when switching topics while on a non-Data sub-tab, where DataTab itself isn't even mounted", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    mockInvokeWith((command: string) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") return Promise.resolve({ id: "tab-1", name: "Tab 1" });
       if (command === "connection_list")
@@ -701,7 +703,7 @@ describe("App", () => {
   it("Clear memory only clears the active top-level tab's data, leaving other tabs' cached topics/selection/viewed message untouched", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     let nextTabId = 1;
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    mockInvokeWith((command: string, args?: unknown) => {
       if (command === "tab_list") return Promise.resolve([]);
       if (command === "tab_create") {
         const id = `tab-${nextTabId++}`;

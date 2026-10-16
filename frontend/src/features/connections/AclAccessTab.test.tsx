@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setInvokeHandlers } from "../../lib/testInvoke";
@@ -341,5 +341,35 @@ describe("AclAccessTab", () => {
 
     expect(screen.getByText(/currently matches 2 of 3 topics/i)).toBeInTheDocument();
     expect(screen.getByText("payments-in, payments-out")).toBeInTheDocument();
+  });
+
+  // Permissions are the one thing on screen that must not silently age: the
+  // listing is held by the backend for 24 h, so the tab says when the broker
+  // was asked and can re-ask.
+  it("shows when the broker was asked and re-reads it only on Refresh", async () => {
+    const read = vi.fn(() => ({ value: access(), fetchedAtMs: new Date(2024, 0, 2, 3, 4, 5).getTime() }));
+    setInvokeHandlers({ acl_cached_for_resource: read, connection_list_topics: () => [] });
+    const user = userEvent.setup();
+    renderWithClient(<AclAccessTab connectionId="1" resourceType="topic" resourceName="orders" />);
+    await screen.findByTestId("acl-matrix");
+    expect(screen.getByText(/Loaded at/)).toBeInTheDocument();
+    expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true })));
+  });
+
+  it("offers Refresh when the ACLs could not be loaded, so a failure can be retried", async () => {
+    setInvokeHandlers({
+      acl_cached_for_resource: () => {
+        throw new Error("timed out");
+      },
+      connection_list_topics: () => [],
+    });
+    renderWithClient(<AclAccessTab connectionId="1" resourceType="topic" resourceName="orders" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("timed out");
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
   });
 });
