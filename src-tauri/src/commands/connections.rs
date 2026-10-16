@@ -85,6 +85,26 @@ pub(crate) async fn connection_for_request(
     Ok(salty_db::connections::get(&state.pool, id).await?)
 }
 
+/// Unix epoch milliseconds, to compare against a `Cached::fetched_at_ms`.
+pub(crate) fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Whether a cached read actually asked the broker: a failure always did, and a
+/// success did only if it was fetched after the request began.
+pub(crate) fn cached_result_reached_broker<T>(
+    result: &Result<salty_core::Cached<T>, error_stack::Report<AppError>>,
+    started_at_ms: u64,
+) -> bool {
+    match result {
+        Ok(cached) => cached.fetched_at_ms >= started_at_ms,
+        Err(_) => true,
+    }
+}
+
 /// Feeds a broker call's outcome back to the connection's circuit breaker:
 /// a rejection counts against its attempt allowance, and any success clears
 /// the slate. Only `AppError::Authentication` counts — a timeout or a
@@ -929,6 +949,168 @@ pub async fn connection_describe_topic_config(
         .describe_topic_config(&connection, &topic, Duration::from_millis(read_timeout_ms))
         .await;
     record_auth_outcome(&state, &id, &result);
+    log_broker_call(
+        &app,
+        "Describing topic config",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// Backs the tree's Brokers list through the backend's 24 h metadata cache; `refresh` re-reads. `connection_list_brokers` stays the live read.
+#[tauri::command]
+pub async fn connection_cached_brokers(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<Vec<salty_core::BrokerSummary>>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_brokers(&connection, refresh, Duration::from_millis(read_timeout_ms))
+        .await;
+    // A cache hit never reached the broker — see `connection_cached_partitions`.
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_outcome(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing brokers",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// Backs the tree's Topics list through the backend's 24 h metadata cache; `refresh` re-reads.
+#[tauri::command]
+pub async fn connection_cached_topics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<Vec<salty_core::TopicSummary>>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_topics(&connection, refresh, Duration::from_millis(read_timeout_ms))
+        .await;
+    // A cache hit never reached the broker — see `connection_cached_partitions`.
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_outcome(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing topics",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// Backs the tree's Consumers list through the backend's 24 h metadata cache; `refresh` re-reads. The rate sampler keeps `connection_list_consumer_groups`, which is live.
+#[tauri::command]
+pub async fn connection_cached_consumer_groups(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<Vec<salty_core::ConsumerGroupSummary>>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_consumer_groups(&connection, refresh, Duration::from_millis(read_timeout_ms))
+        .await;
+    // Success-only, as `connection_list_consumer_groups` — and a cache hit
+    // never reached the broker (see `connection_cached_partitions`).
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_success_only(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing consumer groups",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// Backs the Metrics tabs' and the Partitions tab's partition listing: served
+/// from the backend's 24 h metadata cache unless `refresh`, and reports when
+/// the broker was asked. `connection_list_partitions` stays the live read the
+/// rate sampler needs.
+#[tauri::command]
+pub async fn connection_cached_partitions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    topic: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<Vec<salty_core::PartitionSummary>>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_partitions(
+            &connection,
+            &topic,
+            refresh,
+            Duration::from_millis(read_timeout_ms),
+        )
+        .await;
+    // A cache hit never reached the broker, so it says nothing about whether
+    // the credentials work — it must not reset the failed-login count.
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_outcome(&state, &id, &result);
+    }
+    log_broker_call(
+        &app,
+        "Listing partitions",
+        started,
+        if result.is_ok() { "finished" } else { "failed" },
+    );
+    Ok(result?)
+}
+
+/// Backs the topic Config tab and the cluster Metrics analysis: topic config
+/// through the backend's 24 h metadata cache — see `connection_cached_partitions`.
+#[tauri::command]
+pub async fn connection_cached_topic_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    topic: String,
+    refresh: bool,
+    read_timeout_ms: u64,
+) -> Result<salty_core::Cached<Vec<salty_core::ConfigEntry>>, CommandError> {
+    let connection = connection_for_request(&state, &id).await?;
+    let started_at_ms = unix_now_ms();
+    let started = std::time::Instant::now();
+    let result = state
+        .kafka
+        .cached_topic_config(
+            &connection,
+            &topic,
+            refresh,
+            Duration::from_millis(read_timeout_ms),
+        )
+        .await;
+    if cached_result_reached_broker(&result, started_at_ms) {
+        record_auth_outcome(&state, &id, &result);
+    }
     log_broker_call(
         &app,
         "Describing topic config",

@@ -1,3 +1,4 @@
+import { RefreshBar } from "./RefreshBar";
 import { useTopicConfig } from "./useClusterResources";
 
 export interface ConfigTabProps {
@@ -6,18 +7,27 @@ export interface ConfigTabProps {
 }
 
 export function ConfigTab({ connectionId, topicName }: ConfigTabProps) {
-  const { data: entries, isLoading } = useTopicConfig(connectionId, topicName);
+  const { data: entries, isLoading, isFetching, fetchedAtMs, refresh } = useTopicConfig(connectionId, topicName);
 
   if (isLoading) {
     return <p>Loading config…</p>;
   }
 
+  const bar = <RefreshBar fetchedAtMs={fetchedAtMs} refreshing={isFetching} onRefresh={() => void refresh()} />;
+
   if (!entries || entries.length === 0) {
-    return <p>No config entries found for this topic.</p>;
+    return (
+      <>
+        {bar}
+        <p>No config entries found for this topic.</p>
+      </>
+    );
   }
 
   return (
-    <table className="topic-detail-table">
+    <>
+      {bar}
+      <table className="topic-detail-table">
       <thead>
         <tr>
           <th>Name</th>
@@ -32,6 +42,7 @@ export function ConfigTab({ connectionId, topicName }: ConfigTabProps) {
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+    </>
   );
 }

@@ -44,21 +44,20 @@ export function ClusterResourceTree({ connectionId }: ClusterResourceTreeProps) 
   const topics = useTopics(connectionId, true);
   const groups = useConsumerGroups(connectionId, consumersExpanded);
   const acls = useAcls(connectionId, aclsExpanded);
-  // Each listing is fetched once and then held indefinitely (see
-  // `CLUSTER_LISTING_OPTIONS`), so opening a category is how the user asks
-  // for a fresh one. Wrapped to drop `refetch`'s return value, which
-  // `onExpand` does not want.
-  const refetchBrokers = () => void brokers.refetch();
-  const refetchTopics = () => void topics.refetch();
+  // The listings are cached by the backend (24 h), so opening a category is
+  // how the user asks for a fresh one: `refresh()` makes that read skip the
+  // cache. Wrapped to drop its return value, which `onExpand` does not want.
+  const refetchBrokers = () => void brokers.refresh();
+  const refetchTopics = () => void topics.refresh();
   // Consumers only: the first open is what enables the query, so it fetches
   // on its own — refetching here too would fire two listings at once for the
   // one click. Later opens have nothing else to trigger them.
   const refetchGroups = () => {
-    if (consumersExpanded || groups.data !== undefined) void groups.refetch();
+    if (consumersExpanded || groups.data !== undefined) void groups.refresh();
   };
   // Same first-open rule as Consumers — see `refetchGroups`.
   const refetchAcls = () => {
-    if (aclsExpanded || acls.data !== undefined) void acls.refetch();
+    if (aclsExpanded || acls.data !== undefined) void acls.refresh();
   };
   const hideEmptyGroups = useTreeUiStore((s) => s.hideEmptyConsumerGroups[consumersTreeKey] ?? false);
   const toggleHideEmptyConsumerGroups = useTreeUiStore((s) => s.toggleHideEmptyConsumerGroups);

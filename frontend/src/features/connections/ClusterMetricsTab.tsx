@@ -13,7 +13,6 @@ import {
   topicRisk,
   TopicRisk,
 } from "./clusterHealth";
-import { cachedClusterHealth, rememberClusterHealth } from "./clusterHealthCache";
 import { ClusterHealthLoad, loadClusterHealth } from "./clusterHealthLoader";
 import { AXIS_PROPS, ChartCard, GRID_PROPS, StatCard, TOOLTIP_PROPS } from "./metricsChartStyle";
 
@@ -184,38 +183,28 @@ function HealthOverviewTable({ topics }: { topics: TopicAnalysis[] }) {
  * it runs.
  */
 export function ClusterMetricsTab({ connectionId }: ClusterMetricsTabProps) {
-  const [state, setState] = useState<LoadState>(() => {
-    const recent = cachedClusterHealth(connectionId);
-    return recent
-      ? { phase: "ready", load: recent.load, at: recent.at }
-      : { phase: "loading", loaded: 0, total: null };
-  });
+  const [state, setState] = useState<LoadState>({ phase: "loading", loaded: 0, total: null });
   const controllerRef = useRef<AbortController | null>(null);
 
-  /** `force` reads the cluster even when a recent analysis is on hand — the Refresh button. */
+  /**
+   * `force` makes every read skip the backend's 24 h cache — the Refresh
+   * button. Otherwise each read is answered from it where it can be.
+   */
   const load = useCallback((force: boolean) => {
-    if (!force) {
-      const recent = cachedClusterHealth(connectionId);
-      if (recent) {
-        setState({ phase: "ready", load: recent.load, at: recent.at });
-        return;
-      }
-    }
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
     setState({ phase: "loading", loaded: 0, total: null });
     loadClusterHealth(connectionId, {
       signal: controller.signal,
+      refresh: force,
       onProgress: (loaded, total) => {
         if (!controller.signal.aborted) setState({ phase: "loading", loaded, total });
       },
     })
       .then((result) => {
         if (controller.signal.aborted) return;
-        const at = Date.now();
-        rememberClusterHealth(connectionId, result, at);
-        setState({ phase: "ready", load: result, at });
+        setState({ phase: "ready", load: result, at: Date.now() });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -274,7 +263,12 @@ export function ClusterMetricsTab({ connectionId }: ClusterMetricsTabProps) {
   return (
     <div className="metrics-tab">
       {header}
-      <p className="metrics-hint">Analysed at {new Date(at).toLocaleTimeString()}.</p>
+      <p className="metrics-hint">
+        Analysed at {new Date(at).toLocaleTimeString()}
+        {result.oldestFetchedAtMs !== null && result.oldestFetchedAtMs < at - 60_000
+          ? `; oldest figures read ${new Date(result.oldestFetchedAtMs).toLocaleString()} — Refresh to re-read.`
+          : "."}
+      </p>
 
       <div className="metrics-stats">
         <div role="group" aria-label="Total topics">

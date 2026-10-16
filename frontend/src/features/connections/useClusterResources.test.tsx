@@ -3,11 +3,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setInvokeHandlers } from "../../lib/testInvoke";
 import { retryDelay, RETRY_DELAY_CAP_MS, shouldRetry } from "../../lib/queryRetry";
+import { fireEvent } from "@testing-library/react";
 import {
   FULL_PAYLOAD_TIMEOUT_MS,
   useBrokers,
   useConsumerGroups,
   useFullPayload,
+  usePartitions,
+  useTopicConfig,
   useTopics,
 } from "./useClusterResources";
 
@@ -42,83 +45,117 @@ beforeEach(() => {
 });
 
 /**
- * Each of these is a full cluster-metadata request on the broker. The tree
- * remounts whenever the user switches top-level tabs, and React Query
- * refetches every stale query when the window regains focus — so without a
- * stale window, ordinary app use re-asks a production cluster for its entire
- * topic list over and over.
+ * The 24 h caching of partition layout and topic config is the backend's
+ * (`connection_cached_*`); the frontend asks without `refresh`, shows when the
+ * broker was asked, and passes `refresh` only from a Refresh button.
+ */
+describe("backend-cached metrics queries", () => {
+  const part = { id: 0, leader: 1, replicas: [1], isr: [1], lowOffset: 0, highOffset: 5 };
+
+  function Partitions() {
+    const q = usePartitions("1", "orders");
+    return (
+      <div>
+        <span>count: {q.data?.length ?? "…"}</span>
+        <span>at: {q.fetchedAtMs ?? "…"}</span>
+        <button onClick={() => void q.refresh()}>refresh</button>
+      </div>
+    );
+  }
+
+  function Config() {
+    const q = useTopicConfig("1", "orders");
+    return (
+      <div>
+        <span>entries: {q.data?.length ?? "…"}</span>
+        <span>at: {q.fetchedAtMs ?? "…"}</span>
+        <button onClick={() => void q.refresh()}>refresh</button>
+      </div>
+    );
+  }
+
+  it("asks the cached command without refresh and exposes when the broker was asked", async () => {
+    const cached = vi.fn(() => ({ value: [part], fetchedAtMs: 1234 }));
+    setInvokeHandlers({ connection_cached_partitions: cached });
+
+    renderWith(newClient(), <Partitions />);
+
+    expect(await screen.findByText("count: 1")).toBeInTheDocument();
+    expect(screen.getByText("at: 1234")).toBeInTheDocument();
+    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ id: "1", topic: "orders", refresh: false }));
+  });
+
+  it("refreshes through the backend with refresh=true and replaces what is shown", async () => {
+    let n = 0;
+    const cached = vi.fn(() => ({ value: n++ === 0 ? [part] : [part, { ...part, id: 1 }], fetchedAtMs: 100 + n }));
+    setInvokeHandlers({ connection_cached_partitions: cached });
+    renderWith(newClient(), <Partitions />);
+    await screen.findByText("count: 1");
+
+    fireEvent.click(screen.getByText("refresh"));
+
+    expect(await screen.findByText("count: 2")).toBeInTheDocument();
+    expect(cached).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true }));
+  });
+
+  it("does the same for topic config", async () => {
+    const cached = vi.fn(({ refresh }: { refresh: boolean }) => ({
+      value: refresh ? [{ name: "a", value: "1" }, { name: "b", value: "2" }] : [{ name: "a", value: "1" }],
+      fetchedAtMs: 7,
+    }));
+    setInvokeHandlers({ connection_cached_topic_config: cached });
+    renderWith(newClient(), <Config />);
+    await screen.findByText("entries: 1");
+
+    fireEvent.click(screen.getByText("refresh"));
+
+    expect(await screen.findByText("entries: 2")).toBeInTheDocument();
+  });
+});
+
+/**
+ * Each of these is a full cluster-metadata request on the broker. Holding them
+ * is the backend's job (`salty_kafka::metadata_cache`, 24 h, covered by its own
+ * tests and the client's): the frontend must route every read through the
+ * cached commands and keep no TTL of its own, so that the one place deciding
+ * "is this still fresh?" is the one place that knows when the broker answered.
  */
 describe("cluster resource queries", () => {
-  it("serves a remounted topic list from cache instead of asking the broker again", async () => {
-    const listTopics = vi.fn(() => [{ name: "orders", partitionCount: 3 }]);
-    setInvokeHandlers({ connection_list_topics: listTopics });
+  it.each([
+    ["topics", "connection_cached_topics", "connection_list_topics", <Topics key="t" />, "topics: 1"],
+    ["brokers", "connection_cached_brokers", "connection_list_brokers", <Brokers key="b" />, "brokers: 1"],
+    [
+      "consumer groups",
+      "connection_cached_consumer_groups",
+      "connection_list_consumer_groups",
+      <Groups key="g" />,
+      "groups: 1",
+    ],
+  ])("reads %s through the backend cache, never the live command", async (_n, cachedCmd, liveCmd, ui, text) => {
+    const cached = vi.fn(() => ({ value: [{ name: "x", id: 1, groupId: "g" }], fetchedAtMs: 1 }));
+    const live = vi.fn(() => []);
+    setInvokeHandlers({ [cachedCmd]: cached, [liveCmd]: live });
+
+    renderWith(newClient(), ui);
+
+    await screen.findByText(text);
+    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ id: "1", refresh: false }));
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  it("holds nothing of its own: a remount asks the backend again, which answers from its cache", async () => {
+    const cached = vi.fn(() => ({ value: [{ name: "orders", partitionCount: 3 }], fetchedAtMs: 1 }));
+    setInvokeHandlers({ connection_cached_topics: cached });
     const client = newClient();
 
     const first = renderWith(client, <Topics />);
     await screen.findByText("topics: 1");
     first.unmount();
-
     renderWith(client, <Topics />);
     await screen.findByText("topics: 1");
 
-    expect(listTopics).toHaveBeenCalledTimes(1);
-  });
-
-  it("serves a remounted broker list from cache", async () => {
-    const listBrokers = vi.fn(() => [{ id: 1, host: "localhost", port: 9092 }]);
-    setInvokeHandlers({ connection_list_brokers: listBrokers });
-    const client = newClient();
-
-    const first = renderWith(client, <Brokers />);
-    await screen.findByText("brokers: 1");
-    first.unmount();
-
-    renderWith(client, <Brokers />);
-    await screen.findByText("brokers: 1");
-
-    expect(listBrokers).toHaveBeenCalledTimes(1);
-  });
-
-  it("serves a remounted consumer group list from cache", async () => {
-    const listGroups = vi.fn(() => [{ groupId: "g1", state: "Stable" }]);
-    setInvokeHandlers({ connection_list_consumer_groups: listGroups });
-    const client = newClient();
-
-    const first = renderWith(client, <Groups />);
-    await screen.findByText("groups: 1");
-    first.unmount();
-
-    renderWith(client, <Groups />);
-    await screen.findByText("groups: 1");
-
-    expect(listGroups).toHaveBeenCalledTimes(1);
-  });
-
-  // A cluster listing used to go stale after a minute, after which any
-  // remount (every top-level tab switch) or any window focus re-asked the
-  // broker for the whole list. On a desktop app that is alt-tabbed all day
-  // that read as the app polling the cluster on a timer forever, long after
-  // the list had been fetched successfully. A listing now stays put until
-  // something asks for it again.
-  it("never refetches a successfully loaded listing on its own, however long it has been cached", async () => {
-    vi.useFakeTimers();
-    try {
-      const listTopics = vi.fn(() => [{ name: "orders", partitionCount: 3 }]);
-      setInvokeHandlers({ connection_list_topics: listTopics });
-      const client = newClient();
-
-      const first = renderWith(client, <Topics />);
-      await vi.waitFor(() => expect(listTopics).toHaveBeenCalledTimes(1));
-      first.unmount();
-
-      await vi.advanceTimersByTimeAsync(60 * 60_000);
-      renderWith(client, <Topics />);
-      await vi.advanceTimersByTimeAsync(60 * 60_000);
-
-      expect(listTopics).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(cached).toHaveBeenCalledTimes(2);
+    expect(cached).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
   });
 
   // Every attempt is a fresh Kafka client, a socket and — on a secured

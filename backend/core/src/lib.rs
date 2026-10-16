@@ -27,7 +27,7 @@ pub use broker_liveness::{
     INTERVAL_SLACK_MS, LIVENESS_GRACE_MS, LivenessTracker, STATS_INTERVAL_MS, broker_state_is_up,
 };
 pub use cluster::{
-    BrokerSummary, ConfigEntry, ConsumerGroupLag, ConsumerGroupSummary, PartitionLag,
+    BrokerSummary, Cached, ConfigEntry, ConsumerGroupLag, ConsumerGroupSummary, PartitionLag,
     PartitionMessageCount, PartitionSummary, TopicSummary, messages_in_range,
 };
 pub use cluster_mode::{

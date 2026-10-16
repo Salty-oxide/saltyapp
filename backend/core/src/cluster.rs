@@ -1,5 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+/// A value read from a cluster, with when the backend read it.
+///
+/// Returned by the cached metrics commands so the UI can say how old a figure
+/// is: a cache hit looks identical to a fresh read otherwise.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Cached<T> {
+    pub value: T,
+    /// Unix epoch milliseconds at which the broker was asked.
+    pub fetched_at_ms: u64,
+}
+
 /// One entry in the tree's "Brokers" sub-list, once a cluster is connected.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -120,6 +132,18 @@ mod tests {
         };
         let json = serde_json::to_string(&group).unwrap();
         assert_eq!(json, r#"{"groupId":"billing","state":"Stable"}"#);
+    }
+
+    #[test]
+    fn cached_serializes_the_fetch_time_as_camel_case() {
+        let cached = Cached {
+            value: vec![1, 2],
+            fetched_at_ms: 42,
+        };
+        assert_eq!(
+            serde_json::to_string(&cached).unwrap(),
+            r#"{"value":[1,2],"fetchedAtMs":42}"#
+        );
     }
 
     #[test]

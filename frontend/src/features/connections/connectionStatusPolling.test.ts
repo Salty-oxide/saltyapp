@@ -43,6 +43,22 @@ describe("hasRecentClusterSuccess", () => {
     expect(hasRecentClusterSuccess(qc, "c1", WINDOW, NOW)).toBe(false);
   });
 
+  // The backend answers most cluster reads from its 24 h cache, so a query
+  // that "just succeeded" may not have touched the broker at all. Counting it
+  // would keep the status poll skipped — and a dead cluster looking alive —
+  // for as long as the cache holds.
+  it("uses when the broker was asked, not when a cached read was served", () => {
+    const qc = client();
+    qc.setQueryData(["topics", "c1"], { value: [], fetchedAtMs: NOW - WINDOW - 1 }, { updatedAt: NOW - 1_000 });
+    expect(hasRecentClusterSuccess(qc, "c1", WINDOW, NOW)).toBe(false);
+  });
+
+  it("counts a cached read whose broker answer is inside the window", () => {
+    const qc = client();
+    qc.setQueryData(["topics", "c1"], { value: [], fetchedAtMs: NOW - 2_000 }, { updatedAt: NOW - 1_000 });
+    expect(hasRecentClusterSuccess(qc, "c1", WINDOW, NOW)).toBe(true);
+  });
+
   it("ignores another connection's traffic", () => {
     const qc = client();
     qc.setQueryData(["topics", "c2"], [], { updatedAt: NOW - 1_000 });

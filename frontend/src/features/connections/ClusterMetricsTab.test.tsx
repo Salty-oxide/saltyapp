@@ -3,7 +3,6 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setInvokeHandlers } from "../../lib/testInvoke";
 import { ClusterMetricsTab } from "./ClusterMetricsTab";
-import { CLUSTER_HEALTH_MAX_AGE_MS, forgetClusterHealth } from "./clusterHealthCache";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("recharts", async (importOriginal) => {
@@ -44,8 +43,6 @@ function broker() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
-  // Results are reused for a minute; every case starts from a cluster nobody has analysed.
-  forgetClusterHealth("1");
 });
 
 describe("ClusterMetricsTab", () => {
@@ -160,20 +157,33 @@ describe("ClusterMetricsTab", () => {
     expect(await screen.findByLabelText("Total topics")).toHaveTextContent("0");
   });
 
-  describe("reuse of the last analysis", () => {
+  // Caching is the backend's: the tab holds nothing of its own, so every open
+  // is a read through the cached commands (answered from memory there) and
+  // only Refresh asks for the broker.
+  describe("reads through the backend cache", () => {
     function countingBroker() {
-      const topics = vi.fn(() => [{ name: "orders", partitionCount: 1 }]);
+      const topics = vi.fn(() => ({ value: [{ name: "orders", partitionCount: 1 }], fetchedAtMs: Date.now() }));
+      const partitions = vi.fn(() => ({ value: [part(0, 1, [1], [1])], fetchedAtMs: Date.now() }));
       setInvokeHandlers({
-        connection_list_brokers: () => [{ id: 1, host: "b", port: 9092 }],
-        connection_list_topics: topics,
-        connection_list_partitions: () => [part(0, 1, [1], [1])],
-        connection_describe_topic_config: () => [],
+        connection_cached_brokers: () => ({ value: [{ id: 1, host: "b", port: 9092 }], fetchedAtMs: Date.now() }),
+        connection_cached_topics: topics,
+        connection_cached_partitions: partitions,
+        connection_cached_topic_config: () => ({ value: [], fetchedAtMs: Date.now() }),
       });
-      return topics;
+      return { topics, partitions };
     }
 
-    it("does not read the cluster again when the tab is reopened within the window", async () => {
-      const topics = countingBroker();
+    it("asks without refresh when the tab opens", async () => {
+      const { topics, partitions } = countingBroker();
+      render(<ClusterMetricsTab connectionId="1" />);
+      await screen.findByLabelText("Total topics");
+
+      expect(topics).toHaveBeenCalledWith(expect.objectContaining({ refresh: false }));
+      expect(partitions).toHaveBeenCalledWith(expect.objectContaining({ refresh: false }));
+    });
+
+    it("does not keep its own copy: reopening reads again, through the same cache", async () => {
+      const { topics } = countingBroker();
       const first = render(<ClusterMetricsTab connectionId="1" />);
       await screen.findByLabelText("Total topics");
       first.unmount();
@@ -181,7 +191,8 @@ describe("ClusterMetricsTab", () => {
       render(<ClusterMetricsTab connectionId="1" />);
 
       expect(await screen.findByLabelText("Total topics")).toHaveTextContent("1");
-      expect(topics).toHaveBeenCalledTimes(1);
+      expect(topics).toHaveBeenCalledTimes(2);
+      expect(topics).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: false }));
     });
 
     it("says when the figures were analysed", async () => {
@@ -190,42 +201,16 @@ describe("ClusterMetricsTab", () => {
       expect(await screen.findByText(/Analysed at /)).toBeInTheDocument();
     });
 
-    it("reads again on Refresh, however recent the last analysis", async () => {
-      const topics = countingBroker();
+    it("sends refresh on Refresh so the backend re-reads the cluster", async () => {
+      const { topics, partitions } = countingBroker();
       const user = userEvent.setup();
       render(<ClusterMetricsTab connectionId="1" />);
       await screen.findByLabelText("Total topics");
 
       await user.click(screen.getByRole("button", { name: "Refresh" }));
 
-      await vi.waitFor(() => expect(topics).toHaveBeenCalledTimes(2));
-    });
-
-    it("reads again once the last analysis is older than the window", async () => {
-      const topics = countingBroker();
-      const now = Date.now();
-      const spy = vi.spyOn(Date, "now").mockReturnValue(now);
-      const first = render(<ClusterMetricsTab connectionId="1" />);
-      await screen.findByLabelText("Total topics");
-      first.unmount();
-
-      spy.mockReturnValue(now + CLUSTER_HEALTH_MAX_AGE_MS + 1);
-      render(<ClusterMetricsTab connectionId="1" />);
-
-      await vi.waitFor(() => expect(topics).toHaveBeenCalledTimes(2));
-      spy.mockRestore();
-    });
-
-    it("does not reuse one cluster's analysis for another", async () => {
-      const topics = countingBroker();
-      const first = render(<ClusterMetricsTab connectionId="1" />);
-      await screen.findByLabelText("Total topics");
-      first.unmount();
-
-      render(<ClusterMetricsTab connectionId="2" />);
-
-      await vi.waitFor(() => expect(topics).toHaveBeenCalledTimes(2));
-      forgetClusterHealth("2");
+      await vi.waitFor(() => expect(topics).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true })));
+      expect(partitions).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true }));
     });
   });
 

@@ -1,3 +1,4 @@
+import { RefreshBar } from "./RefreshBar";
 import { usePartitions } from "./useClusterResources";
 
 export interface PartitionsTabProps {
@@ -6,18 +7,27 @@ export interface PartitionsTabProps {
 }
 
 export function PartitionsTab({ connectionId, topicName }: PartitionsTabProps) {
-  const { data: partitions, isLoading } = usePartitions(connectionId, topicName);
+  const { data: partitions, isLoading, isFetching, fetchedAtMs, refresh } = usePartitions(connectionId, topicName);
 
   if (isLoading) {
     return <p>Loading partitions…</p>;
   }
 
+  const bar = <RefreshBar fetchedAtMs={fetchedAtMs} refreshing={isFetching} onRefresh={() => void refresh()} />;
+
   if (!partitions || partitions.length === 0) {
-    return <p>No partitions found for this topic.</p>;
+    return (
+      <>
+        {bar}
+        <p>No partitions found for this topic.</p>
+      </>
+    );
   }
 
   return (
-    <table className="topic-detail-table">
+    <>
+      {bar}
+      <table className="topic-detail-table">
       <thead>
         <tr>
           <th>ID</th>
@@ -40,6 +50,7 @@ export function PartitionsTab({ connectionId, topicName }: PartitionsTabProps) {
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+    </>
   );
 }
