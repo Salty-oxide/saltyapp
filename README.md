@@ -2,7 +2,11 @@
 
 <p align="center">
   <b>The Kafka desktop client built for topics that are actually big.</b><br>
-  Thousands of messages. Megabyte payloads. A window that keeps scrolling.
+  Thousands of messages. Large payloads. A window that keeps scrolling.
+</p>
+
+<p align="center">
+  <a href="https://salty-oxide.github.io/saltyapp/">Website</a> · <a href="../../releases">Download</a>
 </p>
 
 <p align="center">

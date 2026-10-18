@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salty — Kafka desktop client for big topics</title>
+<meta name="description" content="Salty is a fast, free desktop Kafka client for macOS, Windows and Linux. Browse topics with thousands of messages and large payloads, inspect consumer lag, and check cluster health.">
+<link rel="canonical" href="https://salty-oxide.github.io/saltyapp/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Salty — Kafka desktop client for big topics">
+<meta property="og:description" content="A fast desktop Kafka client built for thousands of messages and large payloads.">
+<meta property="og:url" content="https://salty-oxide.github.io/saltyapp/">
+<meta property="og:image" content="https://salty-oxide.github.io/saltyapp/screenshots/data-explorer.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{--bg:#14151f;--panel:#1d1f2e;--line:#2b2e44;--text:#e6e8f5;--mute:#9aa0c0;--accent:#8aadf4;--accent2:#f5bde6}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+nav{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:center;padding:18px 0}
+nav b{font-size:20px;letter-spacing:.3px}
+nav a{color:var(--mute);text-decoration:none;margin-right:16px;font-size:15px}
+nav div{display:flex;flex-wrap:wrap}
+nav a:hover{color:var(--text)}
+.hero{text-align:center;padding:56px 0 32px}
+.hero h1{font-size:clamp(32px,6vw,56px);line-height:1.1;margin:0 0 16px}
+.hero h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--mute);font-size:19px;max-width:640px;margin:0 auto 28px}
+.btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;text-decoration:none;margin:4px}
+.btn.primary{background:var(--accent);color:#10131f}
+.btn.ghost{border:1px solid var(--line);color:var(--text)}
+.shot{margin:40px auto 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 20px 60px #0008}
+.shot img{display:block;width:100%;height:auto}
+section{padding:64px 0}
+h2{font-size:30px;margin:0 0 8px}
+.lead{color:var(--mute);margin:0 0 32px;max-width:640px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.card h3{margin:0 0 6px;font-size:17px}
+.card p{margin:0;color:var(--mute);font-size:15px}
+.two{display:grid;gap:24px;grid-template-columns:1fr 1fr}
+@media(max-width:700px){.two{grid-template-columns:1fr}}
+.two figure{margin:0}
+.two img{width:100%;height:auto;border:1px solid var(--line);border-radius:12px;display:block}
+.two figcaption{color:var(--mute);font-size:15px;margin-top:10px}
+.dl{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.dl a{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;text-decoration:none;color:var(--text);text-align:center}
+.dl a:hover{border-color:var(--accent)}
+.dl small{display:block;color:var(--mute)}
+footer{border-top:1px solid var(--line);padding:28px 0;color:var(--mute);font-size:14px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <b>Salty</b>
+    <div><a href="#features">Features</a><a href="#screens">Screenshots</a><a href="#download">Download</a><a href="https://github.com/Salty-oxide/saltyapp">GitHub</a></div>
+  </nav>
+
+  <header class="hero">
+    <h1>The Kafka desktop client<br>built for <span>big topics</span></h1>
+    <p>Thousands of messages. Large payloads. A window that keeps scrolling. Free and open source for macOS, Windows and Linux.</p>
+    <a class="btn primary" href="https://github.com/Salty-oxide/saltyapp/releases">Download</a>
+    <a class="btn ghost" href="https://github.com/Salty-oxide/saltyapp">View on GitHub</a>
+    <div class="shot"><img src="screenshots/data-explorer.png" alt="Salty's Data tab with a large topic loaded and a big JSON payload open in the viewer"></div>
+  </header>
+
+  <section id="features">
+    <h2>Why Salty</h2>
+    <p class="lead">Most Kafka GUIs struggle on a real topic. Salty is designed around that case.</p>
+    <div class="grid">
+      <div class="card"><h3>Handles volume</h3><p>Rows appear as they arrive, so you're never waiting on the last message.</p></div>
+      <div class="card"><h3>Large payloads stay smooth</h3><p>Open, scroll and expand big documents without freezing the window.</p></div>
+      <div class="card"><h3>Predictable memory</h3><p>A configurable limit, a live usage readout and a one-click clear.</p></div>
+      <div class="card"><h3>Avro and Protobuf</h3><p>Decode with your Schema Registry or a pasted schema.</p></div>
+      <div class="card"><h3>Consumer lag and ACLs</h3><p>See who is behind, by how much, and what each principal may do.</p></div>
+      <div class="card"><h3>Cluster health</h3><p>Every topic scored for replication, leader spread and skew.</p></div>
+      <div class="card"><h3>Secure connections</h3><p>PLAINTEXT, SSL and SASL, with exports that never carry secrets.</p></div>
+      <div class="card"><h3>Safe by default</h3><p>Publishing is off per connection until you turn it on.</p></div>
+    </div>
+  </section>
+
+  <section id="screens">
+    <h2>Screenshots</h2>
+    <p class="lead">Light or dark, with a resizable multi-pane layout.</p>
+    <div class="two">
+      <figure><img src="screenshots/cluster-metrics.png" alt="Cluster metrics with health score and risk analysis" loading="lazy"><figcaption>Cluster health at a glance</figcaption></figure>
+      <figure><img src="screenshots/consumer-lag.png" alt="Consumer group lag by partition and over time" loading="lazy"><figcaption>Consumer lag, explained</figcaption></figure>
+      <figure style="grid-column:1/-1"><img src="screenshots/data-explorer-light.png" alt="The Data tab in the light theme" loading="lazy"><figcaption>Light theme</figcaption></figure>
+    </div>
+    <p style="color:var(--mute);font-size:14px;margin-top:16px">Screenshots show a seeded demo cluster with made-up data.</p>
+  </section>
+
+  <section id="download">
+    <h2>Download</h2>
+    <p class="lead">Installers for every platform are published on the releases page.</p>
+    <div class="dl">
+      <a href="https://github.com/Salty-oxide/saltyapp/releases/latest">macOS<small>.dmg</small></a>
+      <a href="https://github.com/Salty-oxide/saltyapp/releases/latest">Windows<small>.exe / .msi</small></a>
+      <a href="https://github.com/Salty-oxide/saltyapp/releases/latest">Linux<small>.deb / .AppImage</small></a>
+    </div>
+  </section>
+</div>
+<footer>Salty is open source under the Apache License 2.0 · <a href="https://github.com/Salty-oxide/saltyapp">GitHub</a></footer>
+</body>
+</html>
