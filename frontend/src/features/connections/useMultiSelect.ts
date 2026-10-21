@@ -1,4 +1,4 @@
-import { MouseEvent as ReactMouseEvent, useEffect, useMemo } from "react";
+import { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef } from "react";
 import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionStore";
 import { applyTopicClick, EMPTY_TOPIC_SELECTION } from "./topicMultiSelect";
 import { useTopicMultiSelectStore } from "./useTopicMultiSelectStore";
@@ -17,7 +17,7 @@ export interface UseMultiSelectOptions<T> {
 }
 
 /**
- * Ctrl/Cmd+click and Shift+click multi-selection for a tree list. Two or
+ * Ctrl/Cmd+click, Shift+click and Shift+Arrow multi-selection for a tree list. Two or
  * more items empty the workspace selection; one opens normally; a plain click
  * leaves the set. Shared by Topics and Consumers.
  */
@@ -54,10 +54,12 @@ export function useMultiSelect<T>({ storeKey, items, getName, isOpen, onOpen, on
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [multiSelected, clearStored, storeKey]);
 
-  /** `order` is every visible item name, top to bottom — what Shift+click ranges over. */
-  function handleClick(item: T, e: ReactMouseEvent, order: string[]) {
-    const toggle = e.ctrlKey || e.metaKey;
-    const range = e.shiftKey;
+  /** The row the keyboard moves from: the last one clicked or arrowed to. */
+  const cursor = useRef<string | null>(null);
+
+  function select(item: T, modifiers: { toggle: boolean; range: boolean }, order: string[]) {
+    const { toggle, range } = modifiers;
+    cursor.current = getName(item);
     if (!toggle && !range) {
       if (stored) clearStored(storeKey);
       onOpen(item);
@@ -78,6 +80,38 @@ export function useMultiSelect<T>({ storeKey, items, getName, isOpen, onOpen, on
     else onClearSelection();
   }
 
+  /** `order` is every visible item name, top to bottom — what Shift+click ranges over. */
+  function handleClick(item: T, e: ReactMouseEvent, order: string[]) {
+    // Rows are not focusable; the list body is, so the arrow keys have a home.
+    (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-multiselect-list]")?.focus();
+    select(item, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey }, order);
+  }
+
+  /** ArrowDown/ArrowUp move the selection; with Shift they extend it. */
+  function handleKeyDown(e: ReactKeyboardEvent, order: string[]) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    // Typing in the search box (or any field) keeps its own arrow keys.
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || order.length === 0) return;
+    const openName = (items ?? []).find(isOpen);
+    const from =
+      cursor.current !== null && order.includes(cursor.current)
+        ? cursor.current
+        : (openName ? getName(openName) : null) ?? selectedNames[selectedNames.length - 1] ?? null;
+    const fromIndex = from === null ? -1 : order.indexOf(from);
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    const toIndex = fromIndex === -1 ? (step === 1 ? 0 : order.length - 1) : Math.min(order.length - 1, Math.max(0, fromIndex + step));
+    const name = order[toIndex];
+    const item = (items ?? []).find((candidate) => getName(candidate) === name);
+    if (!item) return;
+    e.preventDefault();
+    select(item, { toggle: false, range: e.shiftKey }, order);
+    document
+      .querySelector<HTMLElement>(`[data-testid="resource-item-${CSS.escape(name)}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }
+
   return {
     selectedNames,
     multiSelected,
@@ -85,5 +119,6 @@ export function useMultiSelect<T>({ storeKey, items, getName, isOpen, onOpen, on
     group: multiSelected ? selectedNames : undefined,
     isMultiSelected: (name: string) => multiSelected && selectedNames.includes(name),
     handleClick,
+    handleKeyDown,
   };
 }

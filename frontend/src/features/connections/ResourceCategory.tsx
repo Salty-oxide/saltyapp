@@ -212,6 +212,9 @@ export function ResourceCategory<T>({
           className={`resource-category-body${organizer?.dragging != null && organizer.dropTarget === "" ? " resource-category-body--drop" : ""}`}
           ref={bodyRef}
           data-drop-root={organizer ? "" : undefined}
+          data-multiselect-list={organizer ? "" : undefined}
+          tabIndex={organizer ? -1 : undefined}
+          onKeyDown={organizer ? (e) => multi.handleKeyDown(e, itemOrder) : undefined}
         >
           {/* Sticky, like the category header and cluster row above it: with
               a few hundred topics the search box is the one control the user

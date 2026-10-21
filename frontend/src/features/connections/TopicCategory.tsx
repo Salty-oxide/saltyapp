@@ -89,6 +89,9 @@ export function TopicCategory({ connectionId, topics, isLoading, error, onExpand
         <div
           className={`resource-category-body${organizer.dragging !== null && organizer.dropTarget === "" ? " resource-category-body--drop" : ""}`}
           data-drop-root=""
+          data-multiselect-list=""
+          tabIndex={-1}
+          onKeyDown={(e) => multi.handleKeyDown(e, itemOrder)}
         >
           {/* Sticky band, like the category header and cluster row above it —
               see `.resource-category-search-row`. This is the category the

@@ -143,6 +143,37 @@ npm run build
 
 This produces platform-native installers (`.dmg` on macOS, `.exe`/`.msi` on Windows, `.deb`/`.AppImage` on Linux) under `src-tauri/target/release/bundle/`.
 
+#### Generate the app files manually (as CI does)
+
+The release workflow (`.github/workflows/release.yml`) runs these steps on each platform. To reproduce a release build by hand, run them from the repo root:
+
+```bash
+# 1. Frontend dependencies and build (Tauri embeds the result into the binary)
+npm install --prefix frontend
+npm run build --prefix frontend
+
+# 2. Force librdkafka to rebuild, so its codec config is never served from cache
+cargo clean -p rdkafka-sys --release
+cargo clean -p rdkafka-sys
+
+# 3. Build the app binary
+cargo build --release --manifest-path src-tauri/Cargo.toml
+
+# 4. Verify the binary itself decodes every codec (use salty-app.exe on Windows)
+./target/release/salty-app --librdkafka-features /tmp/librdkafka-features.txt
+cat /tmp/librdkafka-features.txt
+
+# 5. Verify librdkafka's own feature report
+cargo test --release -p salty-kafka build_info -- --nocapture
+
+# 6. Bundle the installers
+npm run build
+```
+
+Step 6 is the manual stand-in for CI's `tauri-apps/tauri-action`. The installers are written under `target/release/bundle/`.
+
+The version in the installer's file name comes from `version` in `src-tauri/tauri.conf.json`. CI also tags the release `app-v<version>` from it and skips the build if that tag already exists, so bump the version there to publish a new release. On Windows, CI first installs zstd with `vcpkg install zstd:x64-windows-static` and sets `CMAKE_PREFIX_PATH` to `<vcpkg root>\installed\x64-windows-static`; do the same if the librdkafka build can't find zstd.
+
 #### Run tests
 
 ```bash
