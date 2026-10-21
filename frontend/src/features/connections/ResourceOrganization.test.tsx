@@ -512,6 +512,53 @@ describe("selecting several topics", () => {
     expect(isHighlighted("billing-events")).toBe(false);
   });
 
+  const pressKey = (name: string, init: KeyboardEventInit) =>
+    fireEvent.keyDown(screen.getByTestId(`resource-item-${name}`), init);
+
+  it("ArrowDown / ArrowUp open the next / previous topic", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+
+    pressKey("orders", { key: "ArrowDown" });
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "payments" });
+
+    pressKey("payments", { key: "ArrowUp" });
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "orders" });
+  });
+
+  it("Shift+ArrowDown extends the selection a row at a time, Shift+ArrowUp shrinks it", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+
+    pressKey("orders", { key: "ArrowDown", shiftKey: true });
+    expect(useWorkspaceSelectionStore.getState().selection).toBeNull();
+    expect(["orders", "payments", "audit"].map(isHighlighted)).toEqual([true, true, false]);
+
+    pressKey("payments", { key: "ArrowDown", shiftKey: true });
+    expect(["orders", "payments", "audit"].map(isHighlighted)).toEqual([true, true, true]);
+
+    pressKey("audit", { key: "ArrowUp", shiftKey: true });
+    expect(["orders", "payments", "audit"].map(isHighlighted)).toEqual([true, true, false]);
+  });
+
+  it("arrow keys typed in the search box do not move the selection", async () => {
+    setInvokeHandlers(fakeBackend().handlers);
+    const user = userEvent.setup();
+    renderTree();
+    await openTopics(user);
+    await user.click(screen.getByText("orders"));
+
+    fireEvent.keyDown(screen.getByLabelText("Search Topics"), { key: "ArrowDown" });
+
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({ type: "topic", topicName: "orders" });
+  });
+
   it("a plain click leaves the multi-selection and opens that topic", async () => {
     setInvokeHandlers(fakeBackend().handlers);
     const user = userEvent.setup();

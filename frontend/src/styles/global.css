@@ -1026,6 +1026,10 @@ textarea {
   margin-left: 10px;
   border-left: 1px solid var(--color-border);
 }
+/* Focusable only so the arrow keys have a home; the highlighted rows are the focus indicator. */
+.resource-category-body:focus {
+  outline: none;
+}
 /* Wraps the search input so the sticky band spans the body's full width —
    a bare sticky input would let items scroll visibly through the gap beside
    it. */
