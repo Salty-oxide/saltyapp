@@ -8,6 +8,8 @@ import { useWorkspaceSelectionStore } from "./features/workspace/useWorkspaceSel
 import { useMessageViewerStore } from "./features/workspace/useMessageViewerStore";
 import { dataTabCacheKey, useTabDataStore } from "./features/workspace/useTabDataStore";
 import { useTreeUiStore } from "./features/connections/useTreeUiStore";
+import { useSidebarStore } from "./features/layout/useSidebarStore";
+import { SETTINGS_TAB_ID } from "./features/settings/useSettingsPanelStore";
 import { sampleNewConnection } from "./features/connections/connectionTestFixtures";
 
 import { mockInvokeWith } from "./lib/testInvoke";
@@ -40,6 +42,7 @@ beforeEach(() => {
   useMessageViewerStore.setState({ message: null, connectionId: null, topic: null, partitionId: undefined, activeTabId: null, byTab: {} });
   useTabDataStore.setState({ messagesByTab: {}, totalMatchingByTab: {} });
   useTreeUiStore.setState({ expanded: {}, searchText: {}, hideEmptyConsumerGroups: {} });
+  useSidebarStore.setState({ isOpen: true });
   capturedFocusHandler = null;
 });
 
@@ -389,6 +392,79 @@ describe("App", () => {
     useTabsStore.setState({ activeTabId: null });
 
     await waitFor(() => expect(screen.getByTestId("resizable-pane-left")).toBeVisible());
+  });
+
+  it("hides the sidebar and its divider from the explorer toggle, leaving the middle pane, and brings them back", async () => {
+    mockInvokeWith((command: string) => {
+      if (command === "tab_list") return Promise.resolve([]);
+      if (command === "connection_list") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected command ${command}`));
+    });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByText("No connections yet. Add one to get started.");
+    expect(screen.getByTestId("resizable-pane-left")).toBeVisible();
+
+    await user.click(screen.getByLabelText("Toggle explorer panel"));
+
+    expect(screen.getByTestId("resizable-pane-left")).not.toBeVisible();
+    expect(screen.getByLabelText("Resize left panel")).not.toBeVisible();
+    expect(screen.getByTestId("resizable-pane-middle")).toBeVisible();
+
+    await user.click(screen.getByLabelText("Toggle explorer panel"));
+
+    expect(screen.getByTestId("resizable-pane-left")).toBeVisible();
+    expect(screen.getByLabelText("Resize left panel")).toBeVisible();
+  });
+
+  it("hides the sidebar on the Settings tab even though the toggle says open, and shows it again on leaving", async () => {
+    mockInvokeWith((command: string) => {
+      if (command === "tab_list") return Promise.resolve([]);
+      if (command === "connection_list") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected command ${command}`));
+    });
+
+    render(<App />);
+    await screen.findByText("No connections yet. Add one to get started.");
+
+    useTabsStore.setState({ activeTabId: SETTINGS_TAB_ID });
+    await waitFor(() => expect(screen.getByTestId("resizable-pane-left")).not.toBeVisible());
+    expect(useSidebarStore.getState().isOpen).toBe(true);
+
+    useTabsStore.setState({ activeTabId: null });
+    await waitFor(() => expect(screen.getByTestId("resizable-pane-left")).toBeVisible());
+  });
+
+  it("keeps a closed sidebar closed across a visit to a JSON tab, then reopens it from the toggle", async () => {
+    mockInvokeWith((command: string) => {
+      if (command === "tab_list") return Promise.resolve([]);
+      if (command === "connection_list") return Promise.resolve([{ id: "1", name: "Local Kafka" }]);
+      if (command === "connection_check_status") return Promise.resolve("REACHABLE");
+      if (command === "connection_is_connected") return Promise.resolve(true);
+      if (command === "connection_list_brokers") return Promise.resolve([]);
+      if (command === "connection_list_topics") return Promise.resolve([]);
+      if (command === "connection_list_consumer_groups") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected command ${command}`));
+    });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByLabelText("Expand Local Kafka"));
+    await user.click(screen.getByLabelText("Toggle explorer panel"));
+
+    const jsonTabId = useJsonViewerTabsStore.getState().openTab("Partition 0 · Offset 1", { a: 1 });
+    useTabsStore.getState().selectTab(jsonTabId);
+    await waitFor(() => expect(screen.getByLabelText("Toggle explorer panel")).toBeDisabled());
+
+    useTabsStore.setState({ activeTabId: null });
+    await waitFor(() => expect(screen.getByLabelText("Toggle explorer panel")).toBeEnabled());
+    expect(screen.getByTestId("resizable-pane-left")).not.toBeVisible();
+
+    await user.click(screen.getByLabelText("Toggle explorer panel"));
+
+    expect(screen.getByTestId("resizable-pane-left")).toBeVisible();
+    expect(screen.getByLabelText("Collapse Local Kafka")).toBeInTheDocument();
   });
 
   it("keeps the connection tree's expanded state when switching to a JSON tab and back", async () => {

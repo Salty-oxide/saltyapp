@@ -2,12 +2,12 @@
 # `tauri build` never has to download them (some networks block those downloads).
 #
 # Tauri looks in %LOCALAPPDATA%\tauri and downloads only what is missing:
-#   NSIS\                      <- nsis.zip (nsis-3.11), for the setup .exe
+#   NSIS\                      <- nsis.zip (nsis-3.13), for the setup .exe
 #   NSIS\Plugins\x86-unicode\additional\nsis_tauri_utils.dll
 #   WixTools314\               <- wix.zip (wix314-binaries), for the .msi
 #
 # Sources (refresh from these when Tauri pins newer versions):
-#   https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip
+#   https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip
 #   https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll
 #   https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
 #
@@ -35,7 +35,7 @@ if (-not (Test-Path $nsis)) {
   $tmp = Join-Path $cache 'nsis-extract'
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
   Expand-Archive (Join-Path $here 'nsis.zip') -DestinationPath $tmp
-  Move-Item (Join-Path $tmp 'nsis-3.11') $nsis
+  Move-Item (Join-Path $tmp 'nsis-3.13') $nsis
   Remove-Item -Recurse -Force $tmp
 }
 $plugin = Join-Path $nsis 'Plugins\x86-unicode\additional'

@@ -4,6 +4,7 @@
   "scripts": {
     "tauri": "npx --prefix frontend tauri",
     "dev": "npx --prefix frontend tauri dev",
+    "prebuild": "node build-support/windows-bundler/seed-cache.mjs",
     "build": "npx --prefix frontend tauri build",
     "coverage": "./scripts/coverage.sh"
   }
