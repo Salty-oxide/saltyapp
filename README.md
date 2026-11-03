@@ -174,6 +174,17 @@ Step 6 is the manual stand-in for CI's `tauri-apps/tauri-action`. The installers
 
 The version in the installer's file name comes from `version` in `src-tauri/tauri.conf.json`. CI also tags the release `app-v<version>` from it and skips the build if that tag already exists, so bump the version there to publish a new release. On Windows, CI first installs zstd with `vcpkg install zstd:x64-windows-static` and sets `CMAKE_PREFIX_PATH` to `<vcpkg root>\installed\x64-windows-static`; do the same if the librdkafka build can't find zstd.
 
+#### Windows installers on a network that blocks downloads
+
+`tauri build` downloads NSIS (for the setup `.exe`) and the WiX toolset (for the `.msi`) from GitHub on first use. If your network blocks that, the same files are committed in `build-support/windows-bundler/` (NSIS 3.11, WiX 3.14.1, `nsis_tauri_utils.dll` 0.5.3 — all unmodified upstream, hashes in `SHA256SUMS`). Seed Tauri's cache from them once, then build as usual:
+
+```powershell
+pwsh build-support/windows-bundler/install-bundler-tools.ps1   # add -Force to replace an existing cache
+npm run build
+```
+
+It writes to `%LOCALAPPDATA%\tauri\NSIS` and `...\WixTools314`, which Tauri uses instead of downloading. When a Tauri upgrade pins different versions, it downloads the new ones again; refresh the files here from the URLs in the script's header comment.
+
 #### Run tests
 
 ```bash
