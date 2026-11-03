@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useSyncExternalStore } from "react";
-import { LogsIcon } from "../../components/AppIcons";
+import { ExplorerIcon, LogsIcon } from "../../components/AppIcons";
 import { LogsPanel } from "./LogsPanel";
 import { useLogsListener } from "./useLogsListener";
 import { useLogsPanelHeight } from "./useLogsPanelHeight";
@@ -11,6 +11,7 @@ import { useWorkspaceSelectionStore } from "../workspace/useWorkspaceSelectionSt
 import { useMessageViewerStore } from "../workspace/useMessageViewerStore";
 import { tabDataPrefix, totalRetainedPayloadBytes, useTabDataStore } from "../workspace/useTabDataStore";
 import { useGeneralSettingsStore } from "../settings/useGeneralSettingsStore";
+import { useSidebarStore, useSidebarVisibility } from "../layout/useSidebarStore";
 import { ThemeMenuButton } from "../theme/ThemeMenuButton";
 import { retainedPayloadBytes, retainedRowBytes } from "../connections/payloadDecoding";
 import { MessageFetchResult } from "../../lib/tauri";
@@ -24,6 +25,8 @@ export function BottomPanel() {
   useLogsListener();
   const isExpanded = useLogsStore((s) => s.isExpanded);
   const toggleExpanded = useLogsStore((s) => s.toggleExpanded);
+  const toggleSidebar = useSidebarStore((s) => s.toggleOpen);
+  const { available: sidebarAvailable, visible: sidebarVisible } = useSidebarVisibility();
   const { height: logsHeight, startResizing, resetHeight, isResizing } = useLogsPanelHeight();
   const activeTabId = useTabsStore((s) => s.activeTabId);
 
@@ -149,6 +152,19 @@ export function BottomPanel() {
         />
       )}
       <div className="bottom-panel-status-strip">
+        <button
+          type="button"
+          aria-label="Toggle explorer panel"
+          aria-expanded={sidebarVisible}
+          title={sidebarAvailable ? "Explorer" : "Explorer (not available on this tab)"}
+          disabled={!sidebarAvailable}
+          className={`bottom-panel-toggle bottom-panel-toggle--icon${
+            sidebarVisible ? " bottom-panel-toggle--active" : ""
+          }`}
+          onClick={toggleSidebar}
+        >
+          <ExplorerIcon />
+        </button>
         {/* Icon-only, like the theme button beside it: the strip is the one
             piece of chrome on screen at every moment, and "▸ Logs" spent a
             word and a caret on a control whose glyph and pressed state say

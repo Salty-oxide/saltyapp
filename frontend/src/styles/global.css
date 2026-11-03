@@ -376,6 +376,13 @@ textarea {
   color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 14%, transparent);
 }
+/* After the hover rules: a toggle with nothing to act on must not respond to one. */
+.bottom-panel-toggle:disabled {
+  color: var(--color-fg-muted);
+  background: none;
+  opacity: 0.4;
+  cursor: default;
+}
 .bottom-panel-memory {
   display: flex;
   align-items: center;

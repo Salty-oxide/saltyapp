@@ -11,6 +11,9 @@ import { dataTabCacheKey, useTabDataStore } from "../workspace/useTabDataStore";
 import { retainedPayloadBytes, retainedRowBytes } from "../connections/payloadDecoding";
 import { TopicMessage } from "../../lib/tauri";
 import { useThemeStore } from "../theme/useThemeStore";
+import { useSidebarStore } from "../layout/useSidebarStore";
+import { useJsonViewerTabsStore } from "../tabs/useJsonViewerTabsStore";
+import { SETTINGS_TAB_ID } from "../settings/useSettingsPanelStore";
 import { DEFAULT_THEME_ID } from "../theme/themes";
 
 /** The panel reads the payload viewer's open message out of the query cache, so it needs a client. */
@@ -37,6 +40,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 beforeEach(() => {
   localStorage.clear();
   useLogsStore.setState({ entries: [], isExpanded: false });
+  useSidebarStore.setState({ isOpen: true });
+  useJsonViewerTabsStore.setState({ tabs: [] });
   useTabsStore.setState({ tabs: [], activeTabId: null, error: null });
   useWorkspaceSelectionStore.setState({ selection: null, activeTabId: null, byTab: {} });
   useMessageViewerStore.setState({ message: null, activeTabId: null, byTab: {} });
@@ -84,6 +89,63 @@ describe("BottomPanel logs tool", () => {
     });
 
     expect(await screen.findByText('Created connection "Local Kafka"')).toBeInTheDocument();
+  });
+});
+
+describe("BottomPanel explorer toggle", () => {
+  const explorer = () => screen.getByLabelText("Toggle explorer panel");
+
+  it("sits immediately before the logs icon", () => {
+    renderPanel();
+    expect(explorer().nextElementSibling).toBe(screen.getByLabelText("Toggle logs panel"));
+  });
+
+  it("is highlighted by default, because the sidebar starts open", () => {
+    renderPanel();
+    expect(explorer()).toHaveClass("bottom-panel-toggle--active");
+    expect(explorer()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("drops the highlight when clicked, and restores it on a second click", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(explorer());
+    expect(useSidebarStore.getState().isOpen).toBe(false);
+    expect(explorer()).not.toHaveClass("bottom-panel-toggle--active");
+    expect(explorer()).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(explorer());
+    expect(useSidebarStore.getState().isOpen).toBe(true);
+    expect(explorer()).toHaveClass("bottom-panel-toggle--active");
+  });
+
+  it("does not affect the logs panel", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(explorer());
+
+    expect(useLogsStore.getState().isExpanded).toBe(false);
+    expect(screen.getByLabelText("Toggle logs panel")).not.toHaveClass("bottom-panel-toggle--active");
+  });
+
+  it.each([
+    ["Settings", () => useTabsStore.setState({ activeTabId: SETTINGS_TAB_ID })],
+    [
+      "a JSON viewer",
+      () => {
+        const id = useJsonViewerTabsStore.getState().openTab("Offset 1", { a: 1 });
+        useTabsStore.setState({ activeTabId: id });
+      },
+    ],
+  ])("is disabled and not highlighted on %s, where the tab has no sidebar", (_name, activate) => {
+    activate();
+    renderPanel();
+
+    expect(explorer()).toBeDisabled();
+    expect(explorer()).not.toHaveClass("bottom-panel-toggle--active");
+    expect(explorer()).toHaveAttribute("aria-expanded", "false");
   });
 });
 

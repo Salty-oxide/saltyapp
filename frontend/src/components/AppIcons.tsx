@@ -80,6 +80,16 @@ export function LogsIcon() {
   );
 }
 
+/** An open folder — the explorer (left sidebar) toggle. Open, so it can't be mistaken for `FolderIcon`'s named groups. */
+export function ExplorerIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M2 12.5v-8a1 1 0 0 1 1-1h2.9l1.5 1.7H12a1 1 0 0 1 1 1v1.2" {...STROKE} />
+      <path d="M2 12.5l1.7-4.6a.8.8 0 0 1 .75-.5h9.3a.7.7 0 0 1 .66.95l-1.35 3.65a.8.8 0 0 1-.75.5H2Z" {...STROKE} />
+    </svg>
+  );
+}
+
 /** A plus — Add Cluster. */
 export function PlusIcon() {
   return (

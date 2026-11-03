@@ -176,14 +176,14 @@ The version in the installer's file name comes from `version` in `src-tauri/taur
 
 #### Windows installers on a network that blocks downloads
 
-`tauri build` downloads NSIS (for the setup `.exe`) and the WiX toolset (for the `.msi`) from GitHub on first use. If your network blocks that, the same files are committed in `build-support/windows-bundler/` (NSIS 3.11, WiX 3.14.1, `nsis_tauri_utils.dll` 0.5.3 — all unmodified upstream, hashes in `SHA256SUMS`). Seed Tauri's cache from them once, then build as usual:
+`tauri build` downloads NSIS (for the setup `.exe`) and the WiX toolset (for the `.msi`) from GitHub on first use. If your network blocks that, the same files are committed in `build-support/windows-bundler/` (NSIS 3.13, WiX 3.14.1, `nsis_tauri_utils.dll` 0.5.3 — all unmodified upstream, hashes in `SHA256SUMS`). One-time setup on a Windows machine, before the first build — run the PowerShell script once to seed Tauri's cache from them:
 
 ```powershell
-pwsh build-support/windows-bundler/install-bundler-tools.ps1   # add -Force to replace an existing cache
+pwsh build-support/windows-bundler/install-bundler-tools.ps1
 npm run build
 ```
 
-It writes to `%LOCALAPPDATA%\tauri\NSIS` and `...\WixTools314`, which Tauri uses instead of downloading. When a Tauri upgrade pins different versions, it downloads the new ones again; refresh the files here from the URLs in the script's header comment.
+It writes to `%LOCALAPPDATA%\tauri\NSIS` and `...\WixTools314`, which Tauri uses instead of downloading. Add `-Force` to replace a cache that already holds an older NSIS. `npm run build` also runs the script automatically (a `prebuild` hook; a no-op on macOS/Linux), so the manual run is only needed if you build another way, such as `npm run tauri build`. When a Tauri upgrade pins different versions, it downloads the new ones again; refresh the files here from the URLs in the script's header comment.
 
 #### Run tests
 

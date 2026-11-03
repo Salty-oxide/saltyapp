@@ -23,6 +23,7 @@ import { PrincipalDetailPanel } from "./features/connections/PrincipalDetailPane
 import { useCreateConnection, useExportConnections, useImportConnections } from "./features/connections/useConnections";
 import { BottomPanel } from "./features/bottom-panel/BottomPanel";
 import { ResizableShell } from "./features/layout/ResizableShell";
+import { useSidebarVisibility } from "./features/layout/useSidebarStore";
 import { useWorkspaceSelectionStore } from "./features/workspace/useWorkspaceSelectionStore";
 import { PreferencesProvider } from "./features/settings/PreferencesProvider";
 import { IdleTimerProvider } from "./features/idle/IdleTimerProvider";
@@ -92,6 +93,7 @@ function AppShell() {
   const activeTabId = useTabsStore((s) => s.activeTabId);
   const activeJsonTab = useJsonViewerTabsStore((s) => s.tabs.find((tab) => tab.id === activeTabId));
   const isSettingsActive = activeTabId === SETTINGS_TAB_ID;
+  const { visible: sidebarVisible } = useSidebarVisibility();
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const setSelectionActiveTab = useWorkspaceSelectionStore((s) => s.setActiveTab);
   const openSettings = useSettingsPanelStore((s) => s.open);
@@ -246,7 +248,7 @@ function AppShell() {
               <ConnectionTree onClone={handleClone} />
             </aside>
           }
-          leftHidden={Boolean(activeJsonTab) || isSettingsActive}
+          leftHidden={!sidebarVisible}
           middle={
             isSettingsActive ? (
               <main className="app-main">
